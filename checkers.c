@@ -6,7 +6,6 @@
 #include <sys/times.h>
 #include <fcntl.h>
 #include <time.h>
-#include <Xm/Xm.h>
 #include <pthread.h>
 
 #include "checkers.h"

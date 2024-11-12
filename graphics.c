@@ -16,6 +16,7 @@
 #include <Xm/Text.h>
 #include <Xm/TextF.h>
 #include <Xm/MessageB.h>
+#include <stdint.h>
 
 #include "checkers.h"
 #include "graphics.h"
@@ -314,7 +315,7 @@ Colormap CreateColorMap(Widget main)
 
 void file_cb(Widget widget, XtPointer client, XtPointer call)
 {
-    int selection = (int) client;
+    int selection = (intptr_t)client;
 
     switch(selection) {
         case 0:    /* New Game */
@@ -496,7 +497,7 @@ void InitGraphics(int argc, char *argv[])
         NULL);
     mainWidget = XtVaCreateManagedWidget("mw", xmMainWindowWidgetClass, toplevel, NULL);
     dpy = XtDisplay(mainWidget);
-    gc = XCreateGC(dpy,DefaultRootWindow(dpy),NULL,NULL);
+    gc = XCreateGC(dpy, DefaultRootWindow(dpy), 0, NULL);
     XSetLineAttributes(dpy,gc,2,LineSolid,CapButt,JoinMiter);
     colormap = CreateColorMap(mainWidget);
     menubar = CreateMenuBar(mainWidget);

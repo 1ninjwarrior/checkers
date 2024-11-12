@@ -1,6 +1,8 @@
 #ifndef CHECKERS_H
 #define CHECKERS_H
 
+#include <Xm/Xm.h>
+
 #define Empty 0
 #define Piece 1
 #define King 2
@@ -23,7 +25,7 @@ void SquareChosen(struct Square *sq);
 
 /** Used internally **/
 void SquaresToBoard(int board[8][8]);
-void AddMove(int move[2]);
+void AddMove(int move[12]);
 void FindKingMoves(int board[8][8], int x, int y);
 void FindMoves(int player, int board[8][8], int x, int y);
 void AddJump(int move[12]);

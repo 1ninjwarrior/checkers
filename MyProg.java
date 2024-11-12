@@ -287,40 +287,150 @@ public class MyProg
         return (jumpptr+moveptr);
     }
 
-    /* Employ your favorite search to find the best move.  This code is an example     */
-    /* of an alpha/beta search, except I have not provided the MinVal,MaxVal,EVAL      */
-    /* functions.  This example code shows you how to call the FindLegalMoves function */
-    /* and the PerformMove function */
-    void FindBestMove(int player)
-    {
-        int i; //,alpha=-1000,beta=1000,minval[48];
-        State state = new State(); //, nextstate;
+    // Evaluation weights
+    private static final int PIECE_VALUE = 100;
+    private static final int KING_VALUE = 175;
+    private static final int POSITION_VALUE = 10;
+    private static final int MOBILITY_VALUE = 5;
+    private static final int JUMP_VALUE = 25;
 
-        /* Set up the current state */
+    // Alpha-beta search with iterative deepening
+    void FindBestMove(int player) {
+        State state = new State();
         state.player = player;
-        memcpy(state.board,board);
-        memset(bestmove,0,12);
+        memcpy(state.board, board);
+        memset(bestmove, 0, 12);
 
-        /* Find the legal moves for the current state */
         FindLegalMoves(state);
+        
+        // Start with depth 1 and increase until we run out of time
+        int depth = 1;
+        long startTime = System.currentTimeMillis();
+        double timeLimit = SecPerMove * 1000 - 100; // Leave 100ms buffer
+        
+        int bestScore = Integer.MIN_VALUE;
+        char[] currentBestMove = new char[12];
+        
+        while (System.currentTimeMillis() - startTime < timeLimit) {
+            for (int i = 0; i < state.moveptr; i++) {
+                // Create new state after move
+                State nextState = new State();
+                nextState.player = 3 - player; // Switch players (1->2, 2->1)
+                memcpy(nextState.board, state.board);
+                
+                // Perform move
+                char[] move = state.movelist[i];
+                PerformMove(nextState.board, move, MoveLength(move));
+                
+                // Get score from alpha-beta search
+                int score = alphaBeta(nextState, depth, Integer.MIN_VALUE, Integer.MAX_VALUE, false);
+                
+                if (score > bestScore) {
+                    bestScore = score;
+                    memcpy(currentBestMove, move, MoveLength(move));
+                }
+            }
+            
+            // Save best move found at this depth
+            memcpy(bestmove, currentBestMove, MoveLength(currentBestMove));
+            depth++;
+        }
+    }
 
-        /*
-        for(i=0; i<state.moveptr; i++) {
-            // Set up the next state by copying the current state and then updating
-            // the new state to reflect the new board after performing the move.
+    private int alphaBeta(State state, int depth, int alpha, int beta, boolean maximizing) {
+        // Check if we're out of time
+        long startTime = System.currentTimeMillis();
+        double timeLimit = SecPerMove * 1000 - 100; // Leave 100ms buffer
+        if (System.currentTimeMillis() - startTime >= timeLimit) {
+            return evaluatePosition(state);
+        }
 
-            // Call your search routine to determine the value of this move.  Note:
-            // if you choose to use alpha/beta search you will need to write the
-            // MinVal and MaxVal functions, as well as your heuristic eval
-            // function.
-        }    
-        */
+        // Base cases
+        if (depth == 0) {
+            return evaluatePosition(state);
+        }
+        
+        FindLegalMoves(state);
+        if (state.moveptr == 0) {
+            return maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
+        }
 
-        // For now, until you write your search routine, we will just set the best move
-        // to be a random legal one, so that it plays a legal game of checkers.
-        //i = rand()%state.moveptr;
-        i = random.nextInt(state.moveptr);
-        memcpy(bestmove,state.movelist[i],MoveLength(state.movelist[i]));
+        if (maximizing) {
+            int value = Integer.MIN_VALUE;
+            for (int i = 0; i < state.moveptr; i++) {
+                State nextState = new State();
+                nextState.player = 3 - state.player;
+                memcpy(nextState.board, state.board);
+                
+                char[] move = state.movelist[i];
+                PerformMove(nextState.board, move, MoveLength(move));
+                
+                value = Math.max(value, alphaBeta(nextState, depth - 1, alpha, beta, false));
+                alpha = Math.max(alpha, value);
+                if (alpha >= beta) {
+                    break; // Beta cutoff
+                }
+            }
+            return value;
+        } else {
+            int value = Integer.MAX_VALUE;
+            for (int i = 0; i < state.moveptr; i++) {
+                State nextState = new State();
+                nextState.player = 3 - state.player;
+                memcpy(nextState.board, state.board);
+                
+                char[] move = state.movelist[i];
+                PerformMove(nextState.board, move, MoveLength(move));
+                
+                value = Math.min(value, alphaBeta(nextState, depth - 1, alpha, beta, true));
+                beta = Math.min(beta, value);
+                if (alpha >= beta) {
+                    break; // Alpha cutoff
+                }
+            }
+            return value;
+        }
+    }
+
+    private int evaluatePosition(State state) {
+        int score = 0;
+        
+        // Count material and position value
+        for (int y = 0; y < 8; y++) {
+            for (int x = 0; x < 8; x++) {
+                if (x % 2 != y % 2) {
+                    char piece = state.board[y][x];
+                    if (!empty(piece)) {
+                        int pieceColor = color(piece);
+                        int multiplier = (pieceColor == state.player) ? 1 : -1;
+                        
+                        // Material value
+                        if (KING(piece)) {
+                            score += KING_VALUE * multiplier;
+                        } else {
+                            score += PIECE_VALUE * multiplier;
+                        }
+                        
+                        // Position value - prefer edges and back row
+                        int positionScore = 0;
+                        if (x == 0 || x == 7) positionScore += 2;
+                        if (pieceColor == 1 && y == 7) positionScore += 3;
+                        if (pieceColor == 2 && y == 0) positionScore += 3;
+                        
+                        score += POSITION_VALUE * positionScore * multiplier;
+                    }
+                }
+            }
+        }
+        
+        // Mobility value - count legal moves
+        FindLegalMoves(state);
+        score += state.moveptr * MOBILITY_VALUE;
+        
+        // Jump value - prefer positions with jump opportunities
+        score += jumpptr * JUMP_VALUE;
+        
+        return score;
     }
 
     /* Converts a square label to it's x,y position */
@@ -355,26 +465,22 @@ public class MyProg
     }    
 
     /* Converts the text version of a move to its integer array version */
-    int TextToMove(String mtext, char[] move)
-    {
-        int len=0,last;
-        char val;
-        String num;
-
-        for (int i = 0; i < mtext.length() && mtext.charAt(i) != '\0';) 
-        {
-            last = i;
-            while(i < mtext.length() && mtext.charAt(i) != '\0' && mtext.charAt(i) != '-') i++;
-
-            num = mtext.substring(last,i);
-            val = (char)Integer.parseInt(num);
-
-            if(val <= 0 || val > 32) return 0;
-            move[len] = val;
-            len++;
-            if(i < mtext.length() && mtext.charAt(i) != '\0') i++;
+    int TextToMove(String mtext, char[] move) {
+        int i = 0, len = 0;
+        String[] numbers = mtext.trim().split("-");
+        
+        try {
+            for (String num : numbers) {
+                int val = Integer.parseInt(num.trim());
+                if (val <= 0 || val > 32) return 0;
+                move[len++] = (char)val;
+            }
+        } catch (NumberFormatException e) {
+            System.err.println("Error parsing move: " + mtext);
+            return 0;
         }
-        if(len<2 || len>12) return 0; else return len;
+        
+        return (len < 2 || len > 12) ? 0 : len;
     }
 
     /* Converts the integer array version of a move to its text version */
@@ -442,38 +548,22 @@ public class MyProg
         stupid.play(argv);
     }
 
-    String myRead(BufferedReader br, int y)
-    {
+    private String myRead(BufferedReader br, int expectedLen) {
         String rval = "";
         char line[] = new char[1000];
-        int x,len=0;
-System.err.println("Java waiting for input");
-        try
-        {
-           //while(!br.ready()) ;
-           len = br.read(line, 0, y);
+        int len = 0;
+        System.err.println("Java waiting for input");
+        
+        try {
+            len = br.read(line, 0, expectedLen > 0 ? expectedLen : 1000);
+            if (len > 0) {
+                rval = new String(line, 0, len).trim();
+            }
+        } catch(Exception e) { 
+            System.err.println("Java read exception: " + e.getMessage()); 
         }
-        catch(Exception e) { System.err.println("Java wio exception"); }
-        for(x=0;x<len;x++) rval += line[x];
-System.err.println("Java read " + len + " chars: " + rval);
-        return rval;
-    }
-
-
-    String myRead(BufferedReader br)
-    {
-        String rval = "";
-        char line[] = new char[1000];
-        int x,len=0;
-System.err.println("Java waiting for input");
-        try
-        {
-           //while(!br.ready()) ;
-           len = br.read(line, 0, 1000);
-        }
-        catch(Exception e) { System.err.println("Java wio exception"); }
-        for(x=0;x<len;x++) rval += line[x];
-System.err.println("Java wRead " + rval);
+        
+        System.err.println("Java read: '" + rval + "'");
         return rval;
     }
 
@@ -529,7 +619,7 @@ System.err.println("Java wRead " + rval);
         {
             /* Read the other player's move from the pipe */
             //buf=br.readLine();
-            buf=myRead(br);
+            buf=myRead(br, 0);
             
             memset(move,0,12);
 
