@@ -28,54 +28,6 @@ class State
 }
 
 
-class WeightsConfiguration {
-    int pieceValue;
-    int kingValue;
-    int positionValue;
-    int mobilityValue;
-    int jumpValue;
-    int defenseValue;
-    int attackValue;
-    int kingSafetyValue;
-    int tempoValue;
-    int kingMobilityBonus;
-    
-    public WeightsConfiguration(int[] weights) {
-        this.pieceValue = weights[0];
-        this.kingValue = weights[1];
-        this.positionValue = weights[2];
-        this.mobilityValue = weights[3];
-        this.jumpValue = weights[4];
-        this.defenseValue = weights[5];
-        this.attackValue = weights[6];
-        this.kingSafetyValue = weights[7];
-        this.tempoValue = weights[8];
-        this.kingMobilityBonus = weights[9];
-    }
-    
-    public WeightsConfiguration(WeightsConfiguration other) {
-        this.pieceValue = other.pieceValue;
-        this.kingValue = other.kingValue;
-        this.positionValue = other.positionValue;
-        this.mobilityValue = other.mobilityValue;
-        this.jumpValue = other.jumpValue;
-        this.defenseValue = other.defenseValue;
-        this.attackValue = other.attackValue;
-        this.kingSafetyValue = other.kingSafetyValue;
-        this.tempoValue = other.tempoValue;
-        this.kingMobilityBonus = other.kingMobilityBonus;
-    }
-    
-    public int[] toArray() {
-        return new int[]{
-            pieceValue, kingValue, positionValue, mobilityValue,
-            jumpValue, defenseValue, attackValue, kingSafetyValue,
-            tempoValue, kingMobilityBonus
-        };
-    }
-}
-
-
 public class MyProg
 {
     public static final int Clear = 0x1f;
@@ -335,282 +287,172 @@ public class MyProg
         return (jumpptr+moveptr);
     }
 
-    // Evaluation weights
-    private static int PIECE_VALUE = 105;
-    private static int KING_VALUE = 252;
-    private static int POSITION_VALUE = 22;
-    private static int MOBILITY_VALUE = 15;
-    private static int JUMP_VALUE = 82;
-    private static int DEFENSE_VALUE = 28;
-    private static int ATTACK_VALUE = 20;
-    private static int KING_SAFETY_VALUE = 39;
-    private static int TEMPO_VALUE = 9;
-    private static int KING_MOBILITY_BONUS = 45;
+    // Heuristic weights
+    private static final int PIECE_VALUE = 100;
+    private static final int KING_VALUE = 175;
+    private static final int BACK_ROW_BONUS = 25;
+    private static final int MIDDLE_BOX_BONUS = 25;
+    private static final int PROTECTED_PIECE_BONUS = 15;
 
-    // Alpha-beta search with iterative deepening
+    // Evaluate board position for the given player
+    private int EvaluatePosition(char[][] board, int player) {
+        int score = 0;
+        int opponent = (player == 1) ? 2 : 1;
+        
+        for(int y = 0; y < 8; y++) {
+            for(int x = 0; x < 8; x++) {
+                if(x%2 != y%2 && !empty(board[y][x])) {
+                    int pieceValue = 0;
+                    if(color(board[y][x]) == player) {
+                        // Base piece value
+                        pieceValue = PIECE_VALUE;
+                        
+                        // King bonus
+                        if(KING(board[y][x])) {
+                            pieceValue = KING_VALUE;
+                        }
+                        
+                        // Back row bonus
+                        if((player == 1 && y == 7) || (player == 2 && y == 0)) {
+                            pieceValue += BACK_ROW_BONUS;
+                        }
+                        
+                        // Middle box bonus (squares 10,11,14,15,18,19,22,23)
+                        if((y == 3 || y == 4) && (x == 2 || x == 3 || x == 4 || x == 5)) {
+                            pieceValue += MIDDLE_BOX_BONUS;
+                        }
+                        
+                        // Protected piece bonus
+                        if(IsProtected(board, x, y, player)) {
+                            pieceValue += PROTECTED_PIECE_BONUS;
+                        }
+                        
+                        score += pieceValue;
+                    } else if(color(board[y][x]) == opponent) {
+                        // Same evaluation for opponent pieces but negative
+                        pieceValue = -PIECE_VALUE;
+                        
+                        if(KING(board[y][x])) {
+                            pieceValue = -KING_VALUE;
+                        }
+                        
+                        if((opponent == 1 && y == 7) || (opponent == 2 && y == 0)) {
+                            pieceValue -= BACK_ROW_BONUS;
+                        }
+                        
+                        if((y == 3 || y == 4) && (x == 2 || x == 3 || x == 4 || x == 5)) {
+                            pieceValue -= MIDDLE_BOX_BONUS;
+                        }
+                        
+                        if(IsProtected(board, x, y, opponent)) {
+                            pieceValue -= PROTECTED_PIECE_BONUS;
+                        }
+                        
+                        score += pieceValue;
+                    }
+                }
+            }
+        }
+        return score;
+    }
+
+    // Check if a piece is protected (has friendly pieces behind it)
+    private boolean IsProtected(char[][] board, int x, int y, int player) {
+        if(player == 1) {
+            // Check bottom-left and bottom-right for player 1
+            if(y > 0 && ((x > 0 && color(board[y-1][x-1]) == player) || 
+                         (x < 7 && color(board[y-1][x+1]) == player))) {
+                return true;
+            }
+        } else {
+            // Check top-left and top-right for player 2
+            if(y < 7 && ((x > 0 && color(board[y+1][x-1]) == player) || 
+                         (x < 7 && color(board[y+1][x+1]) == player))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // MinVal function for alpha-beta pruning
+    private int MinVal(State state, int alpha, int beta, int depth) {
+        if(depth == 0) return EvaluatePosition(state.board, me);
+        
+        FindLegalMoves(state);
+        if(state.moveptr == 0) return Integer.MAX_VALUE; // Loss for MIN
+        
+        for(int i = 0; i < state.moveptr; i++) {
+            State nextstate = new State();
+            nextstate.player = (state.player == 1) ? 2 : 1;
+            memcpy(nextstate.board, state.board);
+            
+            int mlen = MoveLength(state.movelist[i]);
+            PerformMove(nextstate.board, state.movelist[i], mlen);
+            
+            int val = MaxVal(nextstate, alpha, beta, depth - 1);
+            if(val < beta) beta = val;
+            if(beta <= alpha) return alpha;
+        }
+        return beta;
+    }
+
+    // MaxVal function for alpha-beta pruning
+    private int MaxVal(State state, int alpha, int beta, int depth) {
+        if(depth == 0) return EvaluatePosition(state.board, me);
+        
+        FindLegalMoves(state);
+        if(state.moveptr == 0) return Integer.MIN_VALUE; // Loss for MAX
+        
+        for(int i = 0; i < state.moveptr; i++) {
+            State nextstate = new State();
+            nextstate.player = (state.player == 1) ? 2 : 1;
+            memcpy(nextstate.board, state.board);
+            
+            int mlen = MoveLength(state.movelist[i]);
+            PerformMove(nextstate.board, state.movelist[i], mlen);
+            
+            int val = MinVal(nextstate, alpha, beta, depth - 1);
+            if(val > alpha) alpha = val;
+            if(alpha >= beta) return beta;
+        }
+        return alpha;
+    }
+
+    // Modified FindBestMove using alpha-beta pruning
     void FindBestMove(int player) {
+        int alpha = Integer.MIN_VALUE;
+        int beta = Integer.MAX_VALUE;
+        int bestValue = Integer.MIN_VALUE;
+        int bestIndex = 0;
+        
         State state = new State();
         state.player = player;
         memcpy(state.board, board);
         memset(bestmove, 0, 12);
-
-        FindLegalMoves(state);
-        
-        // If only one move is available, make it immediately
-        if (state.moveptr == 1) {
-            memcpy(bestmove, state.movelist[0], MoveLength(state.movelist[0]));
-            return;
-        }
-        
-        long startTime = System.currentTimeMillis();
-        double timeLimit = SecPerMove * 900; // Use 90% of available time
-        
-        int depth = 1;
-        int bestScore = Integer.MIN_VALUE;
-        char[] currentBestMove = new char[12];
-        
-        // Always store the first valid move as fallback
-        memcpy(currentBestMove, state.movelist[0], MoveLength(state.movelist[0]));
-        
-        try {
-            while (System.currentTimeMillis() - startTime < timeLimit && depth <= MaxDepth) {
-                boolean completedDepth = true;
-                int localBestScore = Integer.MIN_VALUE;
-                char[] localBestMove = new char[12];
-                
-                for (int i = 0; i < state.moveptr; i++) {
-                    if (System.currentTimeMillis() - startTime >= timeLimit) {
-                        completedDepth = false;
-                        break;
-                    }
-                    
-                    State nextState = new State();
-                    nextState.player = 3 - player;
-                    memcpy(nextState.board, state.board);
-                    
-                    char[] move = state.movelist[i];
-                    PerformMove(nextState.board, move, MoveLength(move));
-                    
-                    int score = alphaBeta(nextState, depth - 1, Integer.MIN_VALUE, Integer.MAX_VALUE, false, startTime, timeLimit);
-                    
-                    if (score > localBestScore) {
-                        localBestScore = score;
-                        memcpy(localBestMove, move, MoveLength(move));
-                    }
-                }
-                
-                if (completedDepth) {
-                    bestScore = localBestScore;
-                    memcpy(currentBestMove, localBestMove, MoveLength(localBestMove));
-                    depth++;
-                } else {
-                    break;
-                }
-            }
-        } finally {
-            // Always ensure we have a move to make
-            memcpy(bestmove, currentBestMove, MoveLength(currentBestMove));
-        }
-    }
-
-    private int alphaBeta(State state, int depth, int alpha, int beta, boolean maximizing, 
-                         long startTime, double timeLimit) {
-        // Check if we're out of time
-        if (System.currentTimeMillis() - startTime >= timeLimit) {
-            throw new RuntimeException("Time limit exceeded");
-        }
-
-        // Base cases
-        if (depth == 0) {
-            return evaluatePosition(state);
-        }
         
         FindLegalMoves(state);
-        if (state.moveptr == 0) {
-            return maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
-        }
-
-        if (maximizing) {
-            int value = Integer.MIN_VALUE;
-            for (int i = 0; i < state.moveptr; i++) {
-                State nextState = new State();
-                nextState.player = 3 - state.player;
-                memcpy(nextState.board, state.board);
-                
-                char[] move = state.movelist[i];
-                PerformMove(nextState.board, move, MoveLength(move));
-                
-                value = Math.max(value, alphaBeta(nextState, depth - 1, alpha, beta, false, startTime, timeLimit));
-                alpha = Math.max(alpha, value);
-                if (alpha >= beta) {
-                    break;
-                }
-            }
-            return value;
-        } else {
-            int value = Integer.MAX_VALUE;
-            for (int i = 0; i < state.moveptr; i++) {
-                State nextState = new State();
-                nextState.player = 3 - state.player;
-                memcpy(nextState.board, state.board);
-                
-                char[] move = state.movelist[i];
-                PerformMove(nextState.board, move, MoveLength(move));
-                
-                value = Math.min(value, alphaBeta(nextState, depth - 1, alpha, beta, true, startTime, timeLimit));
-                beta = Math.min(beta, value);
-                if (alpha >= beta) {
-                    break;
-                }
-            }
-            return value;
-        }
-    }
-
-    private int evaluatePosition(State state) {
-        int score = 0;
-        int myPieces = 0;
-        int oppPieces = 0;
         
-        // Count material and position value
-        for (int y = 0; y < 8; y++) {
-            for (int x = 0; x < 8; x++) {
-                if (x % 2 != y % 2) {
-                    char piece = state.board[y][x];
-                    if (!empty(piece)) {
-                        int pieceColor = color(piece);
-                        int multiplier = (pieceColor == state.player) ? 1 : -1;
-                        
-                        if (pieceColor == state.player) myPieces++;
-                        else oppPieces++;
-                        
-                        // Material value
-                        if (KING(piece)) {
-                            score += KING_VALUE * multiplier;
-                            
-                            // King positioning
-                            if (isInCenter(x, y)) {
-                                score += KING_SAFETY_VALUE * multiplier;
-                            }
-                        } else {
-                            score += PIECE_VALUE * multiplier;
-                            
-                            // Forward progress for regular pieces
-                            if (pieceColor == 1) { // Red pieces
-                                score += (y * 8) * multiplier;
-                            } else { // White pieces
-                                score += ((7 - y) * 8) * multiplier;
-                            }
-                        }
-                        
-                        // Position evaluation
-                        score += evaluatePosition(x, y, piece, state.player) * multiplier;
-                        
-                        // Piece defense
-                        if (hasSupportingPieces(state.board, x, y, pieceColor)) {
-                            score += DEFENSE_VALUE * multiplier;
-                        }
-                        
-                        // Attack opportunities
-                        if (hasAttackingMoves(state.board, x, y, pieceColor)) {
-                            score += ATTACK_VALUE * multiplier;
-                        }
-                    }
-                }
+        // Use iterative deepening if we have time
+        int searchDepth = (MaxDepth > 0) ? MaxDepth : 6;
+        
+        for(int i = 0; i < state.moveptr; i++) {
+            State nextstate = new State();
+            nextstate.player = (player == 1) ? 2 : 1;
+            memcpy(nextstate.board, state.board);
+            
+            int mlen = MoveLength(state.movelist[i]);
+            PerformMove(nextstate.board, state.movelist[i], mlen);
+            
+            int value = MinVal(nextstate, alpha, beta, searchDepth - 1);
+            
+            if(value > bestValue) {
+                bestValue = value;
+                bestIndex = i;
+                alpha = value;
             }
         }
         
-        // Endgame adjustments
-        if (myPieces + oppPieces <= 8) {
-            score = adjustEndgameScore(score, state, myPieces, oppPieces);
-        }
-        
-        // Mobility value
-        FindLegalMoves(state);
-        score += state.moveptr * MOBILITY_VALUE;
-        
-        // Jump opportunities
-        if (jumpptr > 0) {
-            score += jumpptr * JUMP_VALUE;
-        }
-        
-        return score;
-    }
-
-    private boolean isInCenter(int x, int y) {
-        return (x >= 2 && x <= 5 && y >= 2 && y <= 5);
-    }
-
-    private int evaluatePosition(int x, int y, char piece, int player) {
-        int score = 0;
-        
-        // Center control
-        if (isInCenter(x, y)) {
-            score += 3;
-        }
-        
-        // Back row protection
-        if ((player == 1 && y == 0) || (player == 2 && y == 7)) {
-            score += 4;
-        }
-        
-        // Protected corners
-        if ((x == 0 || x == 7) && (y == 0 || y == 7)) {
-            score += 2;
-        }
-        
-        return score * POSITION_VALUE;
-    }
-
-    private boolean hasSupportingPieces(char[][] board, int x, int y, int pieceColor) {
-        int[] dx = {-1, 1};
-        int[] dy = {-1, 1};
-        
-        for (int i = 0; i < 2; i++) {
-            for (int j = 0; j < 2; j++) {
-                int newX = x + dx[i];
-                int newY = y + dy[j];
-                if (isValidPosition(newX, newY) && 
-                    !empty(board[newY][newX]) && 
-                    color(board[newY][newX]) == pieceColor) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean hasAttackingMoves(char[][] board, int x, int y, int pieceColor) {
-        // Implement your logic here to check for attacking moves
-        return false;
-    }
-
-    private int adjustEndgameScore(int score, State state, int myPieces, int oppPieces) {
-        // Encourage piece trades when ahead, discourage when behind
-        if (myPieces > oppPieces) {
-            score += (myPieces - oppPieces) * TEMPO_VALUE;
-        } else {
-            score -= (oppPieces - myPieces) * TEMPO_VALUE;
-        }
-        
-        // King mobility becomes more important in endgame
-        if (hasKing(state.board, state.player)) {
-            score += KING_MOBILITY_BONUS;
-        }
-        
-        return score;
-    }
-
-    private boolean hasKing(char[][] board, int player) {
-        for (int y = 0; y < 8; y++) {
-            for (int x = 0; x < 8; x++) {
-                if (x % 2 != y % 2 && !empty(board[y][x]) && 
-                    color(board[y][x]) == player && KING(board[y][x])) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        memcpy(bestmove, state.movelist[bestIndex], MoveLength(state.movelist[bestIndex]));
     }
 
     /* Converts a square label to it's x,y position */
@@ -645,22 +487,26 @@ public class MyProg
     }    
 
     /* Converts the text version of a move to its integer array version */
-    int TextToMove(String mtext, char[] move) {
-        int i = 0, len = 0;
-        String[] numbers = mtext.trim().split("-");
-        
-        try {
-            for (String num : numbers) {
-                int val = Integer.parseInt(num.trim());
-                if (val <= 0 || val > 32) return 0;
-                move[len++] = (char)val;
-            }
-        } catch (NumberFormatException e) {
-            System.err.println("Error parsing move: " + mtext);
-            return 0;
+    int TextToMove(String mtext, char[] move)
+    {
+        int len=0,last;
+        char val;
+        String num;
+
+        for (int i = 0; i < mtext.length() && mtext.charAt(i) != '\0';) 
+        {
+            last = i;
+            while(i < mtext.length() && mtext.charAt(i) != '\0' && mtext.charAt(i) != '-') i++;
+
+            num = mtext.substring(last,i);
+            val = (char)Integer.parseInt(num);
+
+            if(val <= 0 || val > 32) return 0;
+            move[len] = val;
+            len++;
+            if(i < mtext.length() && mtext.charAt(i) != '\0') i++;
         }
-        
-        return (len < 2 || len > 12) ? 0 : len;
+        if(len<2 || len>12) return 0; else return len;
     }
 
     /* Converts the integer array version of a move to its text version */
@@ -722,34 +568,44 @@ public class MyProg
 
     public static void main(String argv[]) throws Exception
     {
-        if (argv.length >= 1 && argv[0].equals("--optimize")) {
-            MyProg optimizer = new MyProg();
-            optimizer.optimizeWeights();
-            return;
-        }
-        
         System.err.println("AAAAA");
         if(argv.length>=2) System.err.println("Argument:" + argv[1]);
         MyProg stupid = new MyProg();
         stupid.play(argv);
     }
 
-    private String myRead(BufferedReader br, int expectedLen) {
+    String myRead(BufferedReader br, int y)
+    {
         String rval = "";
         char line[] = new char[1000];
-        int len = 0;
-        System.err.println("Java waiting for input");
-        
-        try {
-            len = br.read(line, 0, expectedLen > 0 ? expectedLen : 1000);
-            if (len > 0) {
-                rval = new String(line, 0, len).trim();
-            }
-        } catch(Exception e) { 
-            System.err.println("Java read exception: " + e.getMessage()); 
+        int x,len=0;
+System.err.println("Java waiting for input");
+        try
+        {
+           //while(!br.ready()) ;
+           len = br.read(line, 0, y);
         }
-        
-        System.err.println("Java read: '" + rval + "'");
+        catch(Exception e) { System.err.println("Java wio exception"); }
+        for(x=0;x<len;x++) rval += line[x];
+System.err.println("Java read " + len + " chars: " + rval);
+        return rval;
+    }
+
+
+    String myRead(BufferedReader br)
+    {
+        String rval = "";
+        char line[] = new char[1000];
+        int x,len=0;
+System.err.println("Java waiting for input");
+        try
+        {
+           //while(!br.ready()) ;
+           len = br.read(line, 0, 1000);
+        }
+        catch(Exception e) { System.err.println("Java wio exception"); }
+        for(x=0;x<len;x++) rval += line[x];
+System.err.println("Java wRead " + rval);
         return rval;
     }
 
@@ -805,7 +661,7 @@ public class MyProg
         {
             /* Read the other player's move from the pipe */
             //buf=br.readLine();
-            buf=myRead(br, 0);
+            buf=myRead(br);
             
             memset(move,0,12);
 
@@ -826,249 +682,6 @@ public class MyProg
             System.err.println("Java move: " + buf);
             System.out.println(buf);
         }
-    }
-
-    private boolean isValidPosition(int x, int y) {
-        return x >= 0 && x < 8 && y >= 0 && y < 8;
-    }
-
-    // Add these as class members
-    private static final int POPULATION_SIZE = 20;
-    private static final int GENERATIONS = 50;
-    private static final int GAMES_PER_MATCH = 10;
-    private static final double MUTATION_RATE = 0.1;
-    private static final double MUTATION_RANGE = 0.2;
-
-    public void optimizeWeights() {
-        System.out.println("Starting weight optimization...");
-        System.out.println("Initial weights:");
-        printWeights(new WeightsConfiguration(saveCurrentWeights()));
-        
-        WeightsConfiguration[] population = initializePopulation();
-        WeightsConfiguration bestConfig = null;
-        int bestFitness = Integer.MIN_VALUE;
-        
-        for (int generation = 0; generation < GENERATIONS; generation++) {
-            System.out.println("\nGeneration " + (generation + 1) + "/" + GENERATIONS);
-            
-            int[] fitness = evaluatePopulation(population);
-            sortPopulationByFitness(population, fitness);
-            
-            if (fitness[0] > bestFitness) {
-                bestFitness = fitness[0];
-                bestConfig = new WeightsConfiguration(population[0]);
-                System.out.println("New best configuration found! Fitness: " + bestFitness);
-                printWeights(bestConfig);
-            }
-            
-            population = createNextGeneration(population);
-        }
-        
-        System.out.println("\nOptimization complete!");
-        System.out.println("Best configuration found (fitness: " + bestFitness + "):");
-        printWeights(bestConfig);
-        
-        // Set the final optimized weights
-        setWeights(bestConfig);
-    }
-    
-    private WeightsConfiguration[] initializePopulation() {
-        WeightsConfiguration[] population = new WeightsConfiguration[POPULATION_SIZE];
-        Random rand = new Random();
-        
-        // Current weights as baseline
-        int[] baseWeights = {
-            PIECE_VALUE, KING_VALUE, POSITION_VALUE, MOBILITY_VALUE,
-            JUMP_VALUE, DEFENSE_VALUE, ATTACK_VALUE, KING_SAFETY_VALUE,
-            TEMPO_VALUE, KING_MOBILITY_BONUS
-        };
-        
-        for (int i = 0; i < POPULATION_SIZE; i++) {
-            int[] newWeights = new int[10];
-            for (int j = 0; j < 10; j++) {
-                // Random variation within ±20% of original values
-                double variation = 1.0 + (rand.nextDouble() * 0.4 - 0.2);
-                newWeights[j] = (int)(baseWeights[j] * variation);
-            }
-            population[i] = new WeightsConfiguration(newWeights);
-        }
-        
-        return population;
-    }
-    
-    private int[] evaluatePopulation(WeightsConfiguration[] population) {
-        int[] fitness = new int[POPULATION_SIZE];
-        
-        // Round-robin tournament
-        for (int i = 0; i < POPULATION_SIZE; i++) {
-            for (int j = i + 1; j < POPULATION_SIZE; j++) {
-                int score = playMatch(population[i], population[j]);
-                fitness[i] += score;
-                fitness[j] -= score;
-            }
-        }
-        
-        return fitness;
-    }
-    
-    private int playMatch(WeightsConfiguration config1, WeightsConfiguration config2) {
-        int score = 0;
-        
-        for (int game = 0; game < GAMES_PER_MATCH; game++) {
-            // Alternate colors
-            if (game % 2 == 0) {
-                score += playSingleGame(config1, config2);
-            } else {
-                score -= playSingleGame(config2, config1);
-            }
-        }
-        
-        return score;
-    }
-    
-    private int playSingleGame(WeightsConfiguration player1Config, WeightsConfiguration player2Config) {
-        // Save original weights
-        WeightsConfiguration originalWeights = new WeightsConfiguration(saveCurrentWeights());
-        
-        try {
-            ResetBoard();
-            int currentPlayer = 1;
-            int moves = 0;
-            
-            while (moves < 200) { // Prevent infinite games
-                // Set weights for current player
-                setWeights(currentPlayer == 1 ? player1Config : player2Config);
-                
-                FindBestMove(currentPlayer);
-                
-                if (bestmove[0] == 0) {
-                    return currentPlayer == 1 ? -1 : 1;
-                }
-                
-                PerformMove(board, bestmove, MoveLength(bestmove));
-                currentPlayer = 3 - currentPlayer;
-                moves++;
-            }
-            
-            return 0; // Draw
-        } finally {
-            // Always restore original weights
-            setWeights(originalWeights);
-        }
-    }
-    
-    private WeightsConfiguration[] createNextGeneration(WeightsConfiguration[] sortedPopulation) {
-        WeightsConfiguration[] newPopulation = new WeightsConfiguration[POPULATION_SIZE];
-        Random rand = new Random();
-        
-        // Keep top 20% unchanged (elitism)
-        int eliteCount = POPULATION_SIZE / 5;
-        for (int i = 0; i < eliteCount; i++) {
-            newPopulation[i] = new WeightsConfiguration(sortedPopulation[i]); // Use copy constructor
-        }
-        
-        // Create rest through crossover and mutation
-        for (int i = eliteCount; i < POPULATION_SIZE; i++) {
-            int parent1 = rand.nextInt(POPULATION_SIZE / 2);
-            int parent2 = rand.nextInt(POPULATION_SIZE / 2);
-            
-            int[] childWeights = crossover(
-                sortedPopulation[parent1].toArray(),
-                sortedPopulation[parent2].toArray()
-            );
-            
-            mutate(childWeights);
-            newPopulation[i] = new WeightsConfiguration(childWeights);
-        }
-        
-        return newPopulation;
-    }
-    
-    private int[] crossover(int[] parent1, int[] parent2) {
-        int[] child = new int[10];
-        Random rand = new Random();
-        
-        for (int i = 0; i < 10; i++) {
-            child[i] = rand.nextBoolean() ? parent1[i] : parent2[i];
-        }
-        
-        return child;
-    }
-    
-    private void mutate(int[] weights) {
-        Random rand = new Random();
-        
-        for (int i = 0; i < weights.length; i++) {
-            if (rand.nextDouble() < MUTATION_RATE) {
-                double variation = 1.0 + (rand.nextDouble() * MUTATION_RANGE * 2 - MUTATION_RANGE);
-                weights[i] = (int)(weights[i] * variation);
-            }
-        }
-    }
-
-    private int[] saveCurrentWeights() {
-        return new int[]{
-            PIECE_VALUE, KING_VALUE, POSITION_VALUE, MOBILITY_VALUE,
-            JUMP_VALUE, DEFENSE_VALUE, ATTACK_VALUE, KING_SAFETY_VALUE,
-            TEMPO_VALUE, KING_MOBILITY_BONUS
-        };
-    }
-
-    private void setWeights(WeightsConfiguration config) {
-        PIECE_VALUE = config.pieceValue;
-        KING_VALUE = config.kingValue;
-        POSITION_VALUE = config.positionValue;
-        MOBILITY_VALUE = config.mobilityValue;
-        JUMP_VALUE = config.jumpValue;
-        DEFENSE_VALUE = config.defenseValue;
-        ATTACK_VALUE = config.attackValue;
-        KING_SAFETY_VALUE = config.kingSafetyValue;
-        TEMPO_VALUE = config.tempoValue;
-        KING_MOBILITY_BONUS = config.kingMobilityBonus;
-    }
-
-    private void restoreWeights(int[] weights) {
-        PIECE_VALUE = weights[0];
-        KING_VALUE = weights[1];
-        POSITION_VALUE = weights[2];
-        MOBILITY_VALUE = weights[3];
-        JUMP_VALUE = weights[4];
-        DEFENSE_VALUE = weights[5];
-        ATTACK_VALUE = weights[6];
-        KING_SAFETY_VALUE = weights[7];
-        TEMPO_VALUE = weights[8];
-        KING_MOBILITY_BONUS = weights[9];
-    }
-
-    private void sortPopulationByFitness(WeightsConfiguration[] population, int[] fitness) {
-        for (int i = 0; i < population.length - 1; i++) {
-            for (int j = 0; j < population.length - i - 1; j++) {
-                if (fitness[j] < fitness[j + 1]) {
-                    // Swap WeightsConfigurations
-                    WeightsConfiguration tempConfig = population[j];
-                    population[j] = population[j + 1];
-                    population[j + 1] = tempConfig;
-
-                    // Swap fitness values
-                    int tempFitness = fitness[j];
-                    fitness[j] = fitness[j + 1];
-                    fitness[j + 1] = tempFitness;
-                }
-            }
-        }
-    }
-
-    private void printWeights(WeightsConfiguration config) {
-        System.out.println("PIECE_VALUE: " + config.pieceValue);
-        System.out.println("KING_VALUE: " + config.kingValue);
-        System.out.println("POSITION_VALUE: " + config.positionValue);
-        System.out.println("MOBILITY_VALUE: " + config.mobilityValue);
-        System.out.println("JUMP_VALUE: " + config.jumpValue);
-        System.out.println("DEFENSE_VALUE: " + config.defenseValue);
-        System.out.println("ATTACK_VALUE: " + config.attackValue);
-        System.out.println("KING_SAFETY_VALUE: " + config.kingSafetyValue);
-        System.out.println("TEMPO_VALUE: " + config.tempoValue);
-        System.out.println("KING_MOBILITY_BONUS: " + config.kingMobilityBonus);
     }
 }
 
