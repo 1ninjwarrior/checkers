@@ -303,46 +303,68 @@ public class MyProg
 
         FindLegalMoves(state);
         
-        // Start with depth 1 and increase until we run out of time
-        int depth = 1;
-        long startTime = System.currentTimeMillis();
-        double timeLimit = SecPerMove * 1000 - 100; // Leave 100ms buffer
+        // If only one move is available, make it immediately
+        if (state.moveptr == 1) {
+            memcpy(bestmove, state.movelist[0], MoveLength(state.movelist[0]));
+            return;
+        }
         
+        long startTime = System.currentTimeMillis();
+        double timeLimit = SecPerMove * 900; // Use 90% of available time
+        
+        int depth = 1;
         int bestScore = Integer.MIN_VALUE;
         char[] currentBestMove = new char[12];
         
-        while (System.currentTimeMillis() - startTime < timeLimit) {
-            for (int i = 0; i < state.moveptr; i++) {
-                // Create new state after move
-                State nextState = new State();
-                nextState.player = 3 - player; // Switch players (1->2, 2->1)
-                memcpy(nextState.board, state.board);
+        // Always store the first valid move as fallback
+        memcpy(currentBestMove, state.movelist[0], MoveLength(state.movelist[0]));
+        
+        try {
+            while (System.currentTimeMillis() - startTime < timeLimit && depth <= MaxDepth) {
+                boolean completedDepth = true;
+                int localBestScore = Integer.MIN_VALUE;
+                char[] localBestMove = new char[12];
                 
-                // Perform move
-                char[] move = state.movelist[i];
-                PerformMove(nextState.board, move, MoveLength(move));
+                for (int i = 0; i < state.moveptr; i++) {
+                    if (System.currentTimeMillis() - startTime >= timeLimit) {
+                        completedDepth = false;
+                        break;
+                    }
+                    
+                    State nextState = new State();
+                    nextState.player = 3 - player;
+                    memcpy(nextState.board, state.board);
+                    
+                    char[] move = state.movelist[i];
+                    PerformMove(nextState.board, move, MoveLength(move));
+                    
+                    int score = alphaBeta(nextState, depth - 1, Integer.MIN_VALUE, Integer.MAX_VALUE, false, startTime, timeLimit);
+                    
+                    if (score > localBestScore) {
+                        localBestScore = score;
+                        memcpy(localBestMove, move, MoveLength(move));
+                    }
+                }
                 
-                // Get score from alpha-beta search
-                int score = alphaBeta(nextState, depth, Integer.MIN_VALUE, Integer.MAX_VALUE, false);
-                
-                if (score > bestScore) {
-                    bestScore = score;
-                    memcpy(currentBestMove, move, MoveLength(move));
+                if (completedDepth) {
+                    bestScore = localBestScore;
+                    memcpy(currentBestMove, localBestMove, MoveLength(localBestMove));
+                    depth++;
+                } else {
+                    break;
                 }
             }
-            
-            // Save best move found at this depth
+        } finally {
+            // Always ensure we have a move to make
             memcpy(bestmove, currentBestMove, MoveLength(currentBestMove));
-            depth++;
         }
     }
 
-    private int alphaBeta(State state, int depth, int alpha, int beta, boolean maximizing) {
+    private int alphaBeta(State state, int depth, int alpha, int beta, boolean maximizing, 
+                         long startTime, double timeLimit) {
         // Check if we're out of time
-        long startTime = System.currentTimeMillis();
-        double timeLimit = SecPerMove * 1000 - 100; // Leave 100ms buffer
         if (System.currentTimeMillis() - startTime >= timeLimit) {
-            return evaluatePosition(state);
+            throw new RuntimeException("Time limit exceeded");
         }
 
         // Base cases
@@ -365,10 +387,10 @@ public class MyProg
                 char[] move = state.movelist[i];
                 PerformMove(nextState.board, move, MoveLength(move));
                 
-                value = Math.max(value, alphaBeta(nextState, depth - 1, alpha, beta, false));
+                value = Math.max(value, alphaBeta(nextState, depth - 1, alpha, beta, false, startTime, timeLimit));
                 alpha = Math.max(alpha, value);
                 if (alpha >= beta) {
-                    break; // Beta cutoff
+                    break;
                 }
             }
             return value;
@@ -382,10 +404,10 @@ public class MyProg
                 char[] move = state.movelist[i];
                 PerformMove(nextState.board, move, MoveLength(move));
                 
-                value = Math.min(value, alphaBeta(nextState, depth - 1, alpha, beta, true));
+                value = Math.min(value, alphaBeta(nextState, depth - 1, alpha, beta, true, startTime, timeLimit));
                 beta = Math.min(beta, value);
                 if (alpha >= beta) {
-                    break; // Alpha cutoff
+                    break;
                 }
             }
             return value;
