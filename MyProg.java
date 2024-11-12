@@ -28,6 +28,54 @@ class State
 }
 
 
+class WeightsConfiguration {
+    int pieceValue;
+    int kingValue;
+    int positionValue;
+    int mobilityValue;
+    int jumpValue;
+    int defenseValue;
+    int attackValue;
+    int kingSafetyValue;
+    int tempoValue;
+    int kingMobilityBonus;
+    
+    public WeightsConfiguration(int[] weights) {
+        this.pieceValue = weights[0];
+        this.kingValue = weights[1];
+        this.positionValue = weights[2];
+        this.mobilityValue = weights[3];
+        this.jumpValue = weights[4];
+        this.defenseValue = weights[5];
+        this.attackValue = weights[6];
+        this.kingSafetyValue = weights[7];
+        this.tempoValue = weights[8];
+        this.kingMobilityBonus = weights[9];
+    }
+    
+    public WeightsConfiguration(WeightsConfiguration other) {
+        this.pieceValue = other.pieceValue;
+        this.kingValue = other.kingValue;
+        this.positionValue = other.positionValue;
+        this.mobilityValue = other.mobilityValue;
+        this.jumpValue = other.jumpValue;
+        this.defenseValue = other.defenseValue;
+        this.attackValue = other.attackValue;
+        this.kingSafetyValue = other.kingSafetyValue;
+        this.tempoValue = other.tempoValue;
+        this.kingMobilityBonus = other.kingMobilityBonus;
+    }
+    
+    public int[] toArray() {
+        return new int[]{
+            pieceValue, kingValue, positionValue, mobilityValue,
+            jumpValue, defenseValue, attackValue, kingSafetyValue,
+            tempoValue, kingMobilityBonus
+        };
+    }
+}
+
+
 public class MyProg
 {
     public static final int Clear = 0x1f;
@@ -288,11 +336,16 @@ public class MyProg
     }
 
     // Evaluation weights
-    private static final int PIECE_VALUE = 100;
-    private static final int KING_VALUE = 175;
-    private static final int POSITION_VALUE = 15;
-    private static final int MOBILITY_VALUE = 10;
-    private static final int JUMP_VALUE = 50;
+    private static int PIECE_VALUE = 105;
+    private static int KING_VALUE = 252;
+    private static int POSITION_VALUE = 22;
+    private static int MOBILITY_VALUE = 15;
+    private static int JUMP_VALUE = 82;
+    private static int DEFENSE_VALUE = 28;
+    private static int ATTACK_VALUE = 20;
+    private static int KING_SAFETY_VALUE = 39;
+    private static int TEMPO_VALUE = 9;
+    private static int KING_MOBILITY_BONUS = 45;
 
     // Alpha-beta search with iterative deepening
     void FindBestMove(int player) {
@@ -416,6 +469,8 @@ public class MyProg
 
     private int evaluatePosition(State state) {
         int score = 0;
+        int myPieces = 0;
+        int oppPieces = 0;
         
         // Count material and position value
         for (int y = 0; y < 8; y++) {
@@ -426,52 +481,136 @@ public class MyProg
                         int pieceColor = color(piece);
                         int multiplier = (pieceColor == state.player) ? 1 : -1;
                         
+                        if (pieceColor == state.player) myPieces++;
+                        else oppPieces++;
+                        
                         // Material value
                         if (KING(piece)) {
                             score += KING_VALUE * multiplier;
+                            
+                            // King positioning
+                            if (isInCenter(x, y)) {
+                                score += KING_SAFETY_VALUE * multiplier;
+                            }
                         } else {
                             score += PIECE_VALUE * multiplier;
                             
-                            // Encourage forward movement for regular pieces
-                            if (pieceColor == 1) { // Red pieces (moving down)
-                                score += (y * 5) * multiplier; // More points for advancing
-                            } else { // White pieces (moving up)
-                                score += ((7 - y) * 5) * multiplier;
+                            // Forward progress for regular pieces
+                            if (pieceColor == 1) { // Red pieces
+                                score += (y * 8) * multiplier;
+                            } else { // White pieces
+                                score += ((7 - y) * 8) * multiplier;
                             }
                         }
                         
-                        // Position value - prefer center control and back row protection
-                        int positionScore = 0;
-                        // Center control bonus
-                        if ((x == 2 || x == 3 || x == 4 || x == 5) && 
-                            (y == 2 || y == 3 || y == 4 || y == 5)) {
-                            positionScore += 3;
-                        }
-                        // Back row bonus
-                        if ((pieceColor == 1 && y == 0) || (pieceColor == 2 && y == 7)) {
-                            positionScore += 2;
-                        }
-                        // Edge control bonus
-                        if (x == 0 || x == 7) {
-                            positionScore += 1;
+                        // Position evaluation
+                        score += evaluatePosition(x, y, piece, state.player) * multiplier;
+                        
+                        // Piece defense
+                        if (hasSupportingPieces(state.board, x, y, pieceColor)) {
+                            score += DEFENSE_VALUE * multiplier;
                         }
                         
-                        score += POSITION_VALUE * positionScore * multiplier;
+                        // Attack opportunities
+                        if (hasAttackingMoves(state.board, x, y, pieceColor)) {
+                            score += ATTACK_VALUE * multiplier;
+                        }
                     }
                 }
             }
         }
         
-        // Mobility value - count legal moves
+        // Endgame adjustments
+        if (myPieces + oppPieces <= 8) {
+            score = adjustEndgameScore(score, state, myPieces, oppPieces);
+        }
+        
+        // Mobility value
         FindLegalMoves(state);
         score += state.moveptr * MOBILITY_VALUE;
         
-        // Jump value - prefer positions with jump opportunities
+        // Jump opportunities
         if (jumpptr > 0) {
             score += jumpptr * JUMP_VALUE;
         }
         
         return score;
+    }
+
+    private boolean isInCenter(int x, int y) {
+        return (x >= 2 && x <= 5 && y >= 2 && y <= 5);
+    }
+
+    private int evaluatePosition(int x, int y, char piece, int player) {
+        int score = 0;
+        
+        // Center control
+        if (isInCenter(x, y)) {
+            score += 3;
+        }
+        
+        // Back row protection
+        if ((player == 1 && y == 0) || (player == 2 && y == 7)) {
+            score += 4;
+        }
+        
+        // Protected corners
+        if ((x == 0 || x == 7) && (y == 0 || y == 7)) {
+            score += 2;
+        }
+        
+        return score * POSITION_VALUE;
+    }
+
+    private boolean hasSupportingPieces(char[][] board, int x, int y, int pieceColor) {
+        int[] dx = {-1, 1};
+        int[] dy = {-1, 1};
+        
+        for (int i = 0; i < 2; i++) {
+            for (int j = 0; j < 2; j++) {
+                int newX = x + dx[i];
+                int newY = y + dy[j];
+                if (isValidPosition(newX, newY) && 
+                    !empty(board[newY][newX]) && 
+                    color(board[newY][newX]) == pieceColor) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean hasAttackingMoves(char[][] board, int x, int y, int pieceColor) {
+        // Implement your logic here to check for attacking moves
+        return false;
+    }
+
+    private int adjustEndgameScore(int score, State state, int myPieces, int oppPieces) {
+        // Encourage piece trades when ahead, discourage when behind
+        if (myPieces > oppPieces) {
+            score += (myPieces - oppPieces) * TEMPO_VALUE;
+        } else {
+            score -= (oppPieces - myPieces) * TEMPO_VALUE;
+        }
+        
+        // King mobility becomes more important in endgame
+        if (hasKing(state.board, state.player)) {
+            score += KING_MOBILITY_BONUS;
+        }
+        
+        return score;
+    }
+
+    private boolean hasKing(char[][] board, int player) {
+        for (int y = 0; y < 8; y++) {
+            for (int x = 0; x < 8; x++) {
+                if (x % 2 != y % 2 && !empty(board[y][x]) && 
+                    color(board[y][x]) == player && KING(board[y][x])) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /* Converts a square label to it's x,y position */
@@ -583,6 +722,12 @@ public class MyProg
 
     public static void main(String argv[]) throws Exception
     {
+        if (argv.length >= 1 && argv[0].equals("--optimize")) {
+            MyProg optimizer = new MyProg();
+            optimizer.optimizeWeights();
+            return;
+        }
+        
         System.err.println("AAAAA");
         if(argv.length>=2) System.err.println("Argument:" + argv[1]);
         MyProg stupid = new MyProg();
@@ -681,6 +826,249 @@ public class MyProg
             System.err.println("Java move: " + buf);
             System.out.println(buf);
         }
+    }
+
+    private boolean isValidPosition(int x, int y) {
+        return x >= 0 && x < 8 && y >= 0 && y < 8;
+    }
+
+    // Add these as class members
+    private static final int POPULATION_SIZE = 20;
+    private static final int GENERATIONS = 50;
+    private static final int GAMES_PER_MATCH = 10;
+    private static final double MUTATION_RATE = 0.1;
+    private static final double MUTATION_RANGE = 0.2;
+
+    public void optimizeWeights() {
+        System.out.println("Starting weight optimization...");
+        System.out.println("Initial weights:");
+        printWeights(new WeightsConfiguration(saveCurrentWeights()));
+        
+        WeightsConfiguration[] population = initializePopulation();
+        WeightsConfiguration bestConfig = null;
+        int bestFitness = Integer.MIN_VALUE;
+        
+        for (int generation = 0; generation < GENERATIONS; generation++) {
+            System.out.println("\nGeneration " + (generation + 1) + "/" + GENERATIONS);
+            
+            int[] fitness = evaluatePopulation(population);
+            sortPopulationByFitness(population, fitness);
+            
+            if (fitness[0] > bestFitness) {
+                bestFitness = fitness[0];
+                bestConfig = new WeightsConfiguration(population[0]);
+                System.out.println("New best configuration found! Fitness: " + bestFitness);
+                printWeights(bestConfig);
+            }
+            
+            population = createNextGeneration(population);
+        }
+        
+        System.out.println("\nOptimization complete!");
+        System.out.println("Best configuration found (fitness: " + bestFitness + "):");
+        printWeights(bestConfig);
+        
+        // Set the final optimized weights
+        setWeights(bestConfig);
+    }
+    
+    private WeightsConfiguration[] initializePopulation() {
+        WeightsConfiguration[] population = new WeightsConfiguration[POPULATION_SIZE];
+        Random rand = new Random();
+        
+        // Current weights as baseline
+        int[] baseWeights = {
+            PIECE_VALUE, KING_VALUE, POSITION_VALUE, MOBILITY_VALUE,
+            JUMP_VALUE, DEFENSE_VALUE, ATTACK_VALUE, KING_SAFETY_VALUE,
+            TEMPO_VALUE, KING_MOBILITY_BONUS
+        };
+        
+        for (int i = 0; i < POPULATION_SIZE; i++) {
+            int[] newWeights = new int[10];
+            for (int j = 0; j < 10; j++) {
+                // Random variation within ±20% of original values
+                double variation = 1.0 + (rand.nextDouble() * 0.4 - 0.2);
+                newWeights[j] = (int)(baseWeights[j] * variation);
+            }
+            population[i] = new WeightsConfiguration(newWeights);
+        }
+        
+        return population;
+    }
+    
+    private int[] evaluatePopulation(WeightsConfiguration[] population) {
+        int[] fitness = new int[POPULATION_SIZE];
+        
+        // Round-robin tournament
+        for (int i = 0; i < POPULATION_SIZE; i++) {
+            for (int j = i + 1; j < POPULATION_SIZE; j++) {
+                int score = playMatch(population[i], population[j]);
+                fitness[i] += score;
+                fitness[j] -= score;
+            }
+        }
+        
+        return fitness;
+    }
+    
+    private int playMatch(WeightsConfiguration config1, WeightsConfiguration config2) {
+        int score = 0;
+        
+        for (int game = 0; game < GAMES_PER_MATCH; game++) {
+            // Alternate colors
+            if (game % 2 == 0) {
+                score += playSingleGame(config1, config2);
+            } else {
+                score -= playSingleGame(config2, config1);
+            }
+        }
+        
+        return score;
+    }
+    
+    private int playSingleGame(WeightsConfiguration player1Config, WeightsConfiguration player2Config) {
+        // Save original weights
+        WeightsConfiguration originalWeights = new WeightsConfiguration(saveCurrentWeights());
+        
+        try {
+            ResetBoard();
+            int currentPlayer = 1;
+            int moves = 0;
+            
+            while (moves < 200) { // Prevent infinite games
+                // Set weights for current player
+                setWeights(currentPlayer == 1 ? player1Config : player2Config);
+                
+                FindBestMove(currentPlayer);
+                
+                if (bestmove[0] == 0) {
+                    return currentPlayer == 1 ? -1 : 1;
+                }
+                
+                PerformMove(board, bestmove, MoveLength(bestmove));
+                currentPlayer = 3 - currentPlayer;
+                moves++;
+            }
+            
+            return 0; // Draw
+        } finally {
+            // Always restore original weights
+            setWeights(originalWeights);
+        }
+    }
+    
+    private WeightsConfiguration[] createNextGeneration(WeightsConfiguration[] sortedPopulation) {
+        WeightsConfiguration[] newPopulation = new WeightsConfiguration[POPULATION_SIZE];
+        Random rand = new Random();
+        
+        // Keep top 20% unchanged (elitism)
+        int eliteCount = POPULATION_SIZE / 5;
+        for (int i = 0; i < eliteCount; i++) {
+            newPopulation[i] = new WeightsConfiguration(sortedPopulation[i]); // Use copy constructor
+        }
+        
+        // Create rest through crossover and mutation
+        for (int i = eliteCount; i < POPULATION_SIZE; i++) {
+            int parent1 = rand.nextInt(POPULATION_SIZE / 2);
+            int parent2 = rand.nextInt(POPULATION_SIZE / 2);
+            
+            int[] childWeights = crossover(
+                sortedPopulation[parent1].toArray(),
+                sortedPopulation[parent2].toArray()
+            );
+            
+            mutate(childWeights);
+            newPopulation[i] = new WeightsConfiguration(childWeights);
+        }
+        
+        return newPopulation;
+    }
+    
+    private int[] crossover(int[] parent1, int[] parent2) {
+        int[] child = new int[10];
+        Random rand = new Random();
+        
+        for (int i = 0; i < 10; i++) {
+            child[i] = rand.nextBoolean() ? parent1[i] : parent2[i];
+        }
+        
+        return child;
+    }
+    
+    private void mutate(int[] weights) {
+        Random rand = new Random();
+        
+        for (int i = 0; i < weights.length; i++) {
+            if (rand.nextDouble() < MUTATION_RATE) {
+                double variation = 1.0 + (rand.nextDouble() * MUTATION_RANGE * 2 - MUTATION_RANGE);
+                weights[i] = (int)(weights[i] * variation);
+            }
+        }
+    }
+
+    private int[] saveCurrentWeights() {
+        return new int[]{
+            PIECE_VALUE, KING_VALUE, POSITION_VALUE, MOBILITY_VALUE,
+            JUMP_VALUE, DEFENSE_VALUE, ATTACK_VALUE, KING_SAFETY_VALUE,
+            TEMPO_VALUE, KING_MOBILITY_BONUS
+        };
+    }
+
+    private void setWeights(WeightsConfiguration config) {
+        PIECE_VALUE = config.pieceValue;
+        KING_VALUE = config.kingValue;
+        POSITION_VALUE = config.positionValue;
+        MOBILITY_VALUE = config.mobilityValue;
+        JUMP_VALUE = config.jumpValue;
+        DEFENSE_VALUE = config.defenseValue;
+        ATTACK_VALUE = config.attackValue;
+        KING_SAFETY_VALUE = config.kingSafetyValue;
+        TEMPO_VALUE = config.tempoValue;
+        KING_MOBILITY_BONUS = config.kingMobilityBonus;
+    }
+
+    private void restoreWeights(int[] weights) {
+        PIECE_VALUE = weights[0];
+        KING_VALUE = weights[1];
+        POSITION_VALUE = weights[2];
+        MOBILITY_VALUE = weights[3];
+        JUMP_VALUE = weights[4];
+        DEFENSE_VALUE = weights[5];
+        ATTACK_VALUE = weights[6];
+        KING_SAFETY_VALUE = weights[7];
+        TEMPO_VALUE = weights[8];
+        KING_MOBILITY_BONUS = weights[9];
+    }
+
+    private void sortPopulationByFitness(WeightsConfiguration[] population, int[] fitness) {
+        for (int i = 0; i < population.length - 1; i++) {
+            for (int j = 0; j < population.length - i - 1; j++) {
+                if (fitness[j] < fitness[j + 1]) {
+                    // Swap WeightsConfigurations
+                    WeightsConfiguration tempConfig = population[j];
+                    population[j] = population[j + 1];
+                    population[j + 1] = tempConfig;
+
+                    // Swap fitness values
+                    int tempFitness = fitness[j];
+                    fitness[j] = fitness[j + 1];
+                    fitness[j + 1] = tempFitness;
+                }
+            }
+        }
+    }
+
+    private void printWeights(WeightsConfiguration config) {
+        System.out.println("PIECE_VALUE: " + config.pieceValue);
+        System.out.println("KING_VALUE: " + config.kingValue);
+        System.out.println("POSITION_VALUE: " + config.positionValue);
+        System.out.println("MOBILITY_VALUE: " + config.mobilityValue);
+        System.out.println("JUMP_VALUE: " + config.jumpValue);
+        System.out.println("DEFENSE_VALUE: " + config.defenseValue);
+        System.out.println("ATTACK_VALUE: " + config.attackValue);
+        System.out.println("KING_SAFETY_VALUE: " + config.kingSafetyValue);
+        System.out.println("TEMPO_VALUE: " + config.tempoValue);
+        System.out.println("KING_MOBILITY_BONUS: " + config.kingMobilityBonus);
     }
 }
 

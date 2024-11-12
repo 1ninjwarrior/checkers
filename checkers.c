@@ -618,7 +618,7 @@ int main(int argc, char *argv[])
           argc-=2;
        }
        else MaxDepth = -1;
-    }
+    }  
     else MaxDepth = -1;
 
 #ifndef GRAPHICS
