@@ -290,9 +290,9 @@ public class MyProg
     // Evaluation weights
     private static final int PIECE_VALUE = 100;
     private static final int KING_VALUE = 175;
-    private static final int POSITION_VALUE = 10;
-    private static final int MOBILITY_VALUE = 5;
-    private static final int JUMP_VALUE = 25;
+    private static final int POSITION_VALUE = 15;
+    private static final int MOBILITY_VALUE = 10;
+    private static final int JUMP_VALUE = 50;
 
     // Alpha-beta search with iterative deepening
     void FindBestMove(int player) {
@@ -431,13 +431,30 @@ public class MyProg
                             score += KING_VALUE * multiplier;
                         } else {
                             score += PIECE_VALUE * multiplier;
+                            
+                            // Encourage forward movement for regular pieces
+                            if (pieceColor == 1) { // Red pieces (moving down)
+                                score += (y * 5) * multiplier; // More points for advancing
+                            } else { // White pieces (moving up)
+                                score += ((7 - y) * 5) * multiplier;
+                            }
                         }
                         
-                        // Position value - prefer edges and back row
+                        // Position value - prefer center control and back row protection
                         int positionScore = 0;
-                        if (x == 0 || x == 7) positionScore += 2;
-                        if (pieceColor == 1 && y == 7) positionScore += 3;
-                        if (pieceColor == 2 && y == 0) positionScore += 3;
+                        // Center control bonus
+                        if ((x == 2 || x == 3 || x == 4 || x == 5) && 
+                            (y == 2 || y == 3 || y == 4 || y == 5)) {
+                            positionScore += 3;
+                        }
+                        // Back row bonus
+                        if ((pieceColor == 1 && y == 0) || (pieceColor == 2 && y == 7)) {
+                            positionScore += 2;
+                        }
+                        // Edge control bonus
+                        if (x == 0 || x == 7) {
+                            positionScore += 1;
+                        }
                         
                         score += POSITION_VALUE * positionScore * multiplier;
                     }
@@ -450,7 +467,9 @@ public class MyProg
         score += state.moveptr * MOBILITY_VALUE;
         
         // Jump value - prefer positions with jump opportunities
-        score += jumpptr * JUMP_VALUE;
+        if (jumpptr > 0) {
+            score += jumpptr * JUMP_VALUE;
+        }
         
         return score;
     }
