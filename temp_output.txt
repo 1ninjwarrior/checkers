@@ -1,0 +1,14 @@
+Player2 is java player
+/usr/bin/java MyProg
+./computer SecPerMove == 1
+I'm Player 1
+AAAAA
+Java maximum search depth = -1
+Java waiting for input
+Java read 7 chars: Player2
+Java is player 2
+Java waiting for input
+Java wRead 9-13
+Java move: 24-19
+Java waiting for input
+Java wRead 6-9

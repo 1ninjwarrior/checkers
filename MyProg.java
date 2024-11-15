@@ -54,6 +54,20 @@ public class MyProg
 
     Random random = new Random();
 
+    private long startTime;
+    private boolean timeIsUp;
+
+    // Enhanced heuristic weights
+    private static final int PIECE_VALUE = 100;
+    private static final int KING_VALUE = 200;  // Increased king value
+    private static final int BACK_ROW_BONUS = 30;
+    private static final int MIDDLE_BOX_BONUS = 35;
+    private static final int PROTECTED_PIECE_BONUS = 20;
+    private static final int MOBILITY_BONUS = 15;
+    private static final int AGGRESSIVE_BONUS = 25;
+    private static final int ENDGAME_KING_BONUS = 50;
+    private static final int PROMOTION_PATH_BONUS = 20;
+
     public int number(char x) { return ((x)&0x1f); }
     public boolean empty(char x) { return ((((x)>>5)&0x03)==0?1:0) != 0; }
     public boolean piece(char x) { return ((((x)>>5)&0x03)==1?1:0) != 0; }
@@ -287,99 +301,146 @@ public class MyProg
         return (jumpptr+moveptr);
     }
 
-    // Heuristic weights
-    private static final int PIECE_VALUE = 100;
-    private static final int KING_VALUE = 175;
-    private static final int BACK_ROW_BONUS = 25;
-    private static final int MIDDLE_BOX_BONUS = 25;
-    private static final int PROTECTED_PIECE_BONUS = 15;
-
-    // Evaluate board position for the given player
+    // Enhanced evaluation function
     private int EvaluatePosition(char[][] board, int player) {
         int score = 0;
         int opponent = (player == 1) ? 2 : 1;
+        int myPieces = 0;
+        int opponentPieces = 0;
         
         for(int y = 0; y < 8; y++) {
             for(int x = 0; x < 8; x++) {
                 if(x%2 != y%2 && !empty(board[y][x])) {
-                    int pieceValue = 0;
                     if(color(board[y][x]) == player) {
-                        // Base piece value
-                        pieceValue = PIECE_VALUE;
-                        
-                        // King bonus
-                        if(KING(board[y][x])) {
-                            pieceValue = KING_VALUE;
-                        }
-                        
-                        // Back row bonus
-                        if((player == 1 && y == 7) || (player == 2 && y == 0)) {
-                            pieceValue += BACK_ROW_BONUS;
-                        }
-                        
-                        // Middle box bonus (squares 10,11,14,15,18,19,22,23)
-                        if((y == 3 || y == 4) && (x == 2 || x == 3 || x == 4 || x == 5)) {
-                            pieceValue += MIDDLE_BOX_BONUS;
-                        }
-                        
-                        // Protected piece bonus
-                        if(IsProtected(board, x, y, player)) {
-                            pieceValue += PROTECTED_PIECE_BONUS;
-                        }
-                        
-                        score += pieceValue;
-                    } else if(color(board[y][x]) == opponent) {
-                        // Same evaluation for opponent pieces but negative
-                        pieceValue = -PIECE_VALUE;
-                        
-                        if(KING(board[y][x])) {
-                            pieceValue = -KING_VALUE;
-                        }
-                        
-                        if((opponent == 1 && y == 7) || (opponent == 2 && y == 0)) {
-                            pieceValue -= BACK_ROW_BONUS;
-                        }
-                        
-                        if((y == 3 || y == 4) && (x == 2 || x == 3 || x == 4 || x == 5)) {
-                            pieceValue -= MIDDLE_BOX_BONUS;
-                        }
-                        
-                        if(IsProtected(board, x, y, opponent)) {
-                            pieceValue -= PROTECTED_PIECE_BONUS;
-                        }
-                        
-                        score += pieceValue;
+                        myPieces++;
+                        score += evaluatePiece(board, x, y, player, true);
+                    } else {
+                        opponentPieces++;
+                        score -= evaluatePiece(board, x, y, opponent, false);
                     }
                 }
             }
         }
+
+        // Endgame detection and strategy adjustment
+        boolean isEndgame = (myPieces + opponentPieces) <= 8;
+        if(isEndgame) {
+            score += evaluateEndgame(board, player, myPieces, opponentPieces);
+        }
+
+        // Mobility evaluation
+        score += evaluateMobility(board, player) * MOBILITY_BONUS;
+        
         return score;
     }
 
-    // Check if a piece is protected (has friendly pieces behind it)
-    private boolean IsProtected(char[][] board, int x, int y, int player) {
-        if(player == 1) {
-            // Check bottom-left and bottom-right for player 1
-            if(y > 0 && ((x > 0 && color(board[y-1][x-1]) == player) || 
-                         (x < 7 && color(board[y-1][x+1]) == player))) {
-                return true;
+    private int evaluatePiece(char[][] board, int x, int y, int player, boolean mine) {
+        int score = 0;
+        int multiplier = mine ? 1 : 1;  // Adjust if needed for balance
+
+        // Base piece value
+        score += PIECE_VALUE;
+
+        // King value
+        if(KING(board[y][x])) {
+            score += KING_VALUE;
+            // Additional bonus for centralized kings
+            if((x >= 2 && x <= 5) && (y >= 2 && y <= 5)) {
+                score += 15;
             }
         } else {
-            // Check top-left and top-right for player 2
-            if(y < 7 && ((x > 0 && color(board[y+1][x-1]) == player) || 
-                         (x < 7 && color(board[y+1][x+1]) == player))) {
-                return true;
+            // Promotion path bonus for regular pieces
+            int promotionDistance = (player == 1) ? (7 - y) : y;
+            score += (PROMOTION_PATH_BONUS * (7 - promotionDistance)) / 7;
+        }
+
+        // Position-based bonuses
+        if((player == 1 && y == 7) || (player == 2 && y == 0)) {
+            score += BACK_ROW_BONUS;
+        }
+
+        // Middle control bonus
+        if((y == 3 || y == 4) && (x >= 2 && x <= 5)) {
+            score += MIDDLE_BOX_BONUS;
+        }
+
+        // Protected piece bonus
+        if(IsProtected(board, x, y, player)) {
+            score += PROTECTED_PIECE_BONUS;
+        }
+
+        // Aggressive positioning bonus
+        if(hasAttackingPosition(board, x, y, player)) {
+            score += AGGRESSIVE_BONUS;
+        }
+
+        return score * multiplier;
+    }
+
+    private int evaluateEndgame(char[][] board, int player, int myPieces, int opponentPieces) {
+        int score = 0;
+        
+        // Strongly favor having more pieces in endgame
+        score += (myPieces - opponentPieces) * 150;
+        
+        // Extra value for kings in endgame
+        for(int y = 0; y < 8; y++) {
+            for(int x = 0; x < 8; x++) {
+                if(x%2 != y%2 && !empty(board[y][x])) {
+                    if(color(board[y][x]) == player && KING(board[y][x])) {
+                        score += ENDGAME_KING_BONUS;
+                    }
+                }
             }
         }
+        
+        return score;
+    }
+
+    private int evaluateMobility(char[][] board, int player) {
+        State tempState = new State();
+        tempState.player = player;
+        memcpy(tempState.board, board);
+        
+        FindLegalMoves(tempState);
+        return tempState.moveptr;
+    }
+
+    private boolean hasAttackingPosition(char[][] board, int x, int y, int player) {
+        int forward = (player == 1) ? 1 : -1;
+        
+        // Check if piece can jump opponent pieces
+        for(int dx = -2; dx <= 2; dx += 4) {
+            int ny = y + (forward * 2);
+            int nx = x + dx;
+            
+            if(ny >= 0 && ny < 8 && nx >= 0 && nx < 8) {
+                // Check if middle position has opponent piece
+                if(!empty(board[y + forward][x + (dx/2)]) && 
+                   color(board[y + forward][x + (dx/2)]) != player &&
+                   empty(board[ny][nx])) {
+                    return true;
+                }
+            }
+        }
+        
         return false;
     }
 
-    // MinVal function for alpha-beta pruning
+    // Enhanced MinVal and MaxVal functions with better pruning
     private int MinVal(State state, int alpha, int beta, int depth) {
-        if(depth == 0) return EvaluatePosition(state.board, me);
+        if (timeIsUp || isTimeUp()) {
+            timeIsUp = true;
+            return EvaluatePosition(state.board, me);
+        }
+        
+        if (depth == 0) return EvaluatePosition(state.board, me);
         
         FindLegalMoves(state);
         if(state.moveptr == 0) return Integer.MAX_VALUE; // Loss for MIN
+        
+        // Sort moves to improve pruning
+        sortMoves(state);
         
         for(int i = 0; i < state.moveptr; i++) {
             State nextstate = new State();
@@ -396,12 +457,19 @@ public class MyProg
         return beta;
     }
 
-    // MaxVal function for alpha-beta pruning
     private int MaxVal(State state, int alpha, int beta, int depth) {
-        if(depth == 0) return EvaluatePosition(state.board, me);
+        if (timeIsUp || isTimeUp()) {
+            timeIsUp = true;
+            return EvaluatePosition(state.board, me);
+        }
+        
+        if (depth == 0) return EvaluatePosition(state.board, me);
         
         FindLegalMoves(state);
         if(state.moveptr == 0) return Integer.MIN_VALUE; // Loss for MAX
+        
+        // Sort moves to improve pruning
+        sortMoves(state);
         
         for(int i = 0; i < state.moveptr; i++) {
             State nextstate = new State();
@@ -418,12 +486,52 @@ public class MyProg
         return alpha;
     }
 
-    // Modified FindBestMove using alpha-beta pruning
+    // Helper method to sort moves for better pruning
+    private void sortMoves(State state) {
+        int[] moveScores = new int[state.moveptr];
+        
+        // Score each move
+        for(int i = 0; i < state.moveptr; i++) {
+            State nextstate = new State();
+            nextstate.player = (state.player == 1) ? 2 : 1;
+            memcpy(nextstate.board, state.board);
+            
+            int mlen = MoveLength(state.movelist[i]);
+            PerformMove(nextstate.board, state.movelist[i], mlen);
+            
+            moveScores[i] = EvaluatePosition(nextstate.board, me);
+        }
+        
+        // Bubble sort moves based on scores
+        for(int i = 0; i < state.moveptr - 1; i++) {
+            for(int j = 0; j < state.moveptr - i - 1; j++) {
+                if(moveScores[j] < moveScores[j + 1]) {
+                    // Swap moves
+                    char[] tempMove = new char[12];
+                    memcpy(tempMove, state.movelist[j], 12);
+                    memcpy(state.movelist[j], state.movelist[j + 1], 12);
+                    memcpy(state.movelist[j + 1], tempMove, 12);
+                    
+                    // Swap scores
+                    int tempScore = moveScores[j];
+                    moveScores[j] = moveScores[j + 1];
+                    moveScores[j + 1] = tempScore;
+                }
+            }
+        }
+    }
+
+    // Modified FindBestMove using iterative deepening with time limit
     void FindBestMove(int player) {
+        startTime = System.currentTimeMillis();
+        timeIsUp = false;
+        int currentDepth = 1;
+        
         int alpha = Integer.MIN_VALUE;
         int beta = Integer.MAX_VALUE;
         int bestValue = Integer.MIN_VALUE;
         int bestIndex = 0;
+        char[] currentBestMove = new char[12];
         
         State state = new State();
         state.player = player;
@@ -432,27 +540,63 @@ public class MyProg
         
         FindLegalMoves(state);
         
-        // Use iterative deepening if we have time
-        int searchDepth = (MaxDepth > 0) ? MaxDepth : 6;
-        
-        for(int i = 0; i < state.moveptr; i++) {
-            State nextstate = new State();
-            nextstate.player = (player == 1) ? 2 : 1;
-            memcpy(nextstate.board, state.board);
+        // If only one move is available, make it immediately
+        if (state.moveptr == 1) {
+            memcpy(bestmove, state.movelist[0], MoveLength(state.movelist[0]));
+            return;
+        }
+
+        // Iterative deepening loop
+        while (!timeIsUp && (MaxDepth == -1 || currentDepth <= MaxDepth)) {
+            boolean completedDepth = true;
+            int tempBestValue = Integer.MIN_VALUE;
+            int tempBestIndex = 0;
             
-            int mlen = MoveLength(state.movelist[i]);
-            PerformMove(nextstate.board, state.movelist[i], mlen);
-            
-            int value = MinVal(nextstate, alpha, beta, searchDepth - 1);
-            
-            if(value > bestValue) {
-                bestValue = value;
-                bestIndex = i;
-                alpha = value;
+            for (int i = 0; i < state.moveptr && !timeIsUp; i++) {
+                State nextstate = new State();
+                nextstate.player = (player == 1) ? 2 : 1;
+                memcpy(nextstate.board, state.board);
+                
+                int mlen = MoveLength(state.movelist[i]);
+                PerformMove(nextstate.board, state.movelist[i], mlen);
+                
+                int value = MinVal(nextstate, alpha, beta, currentDepth - 1);
+                
+                if (isTimeUp()) {
+                    timeIsUp = true;
+                    completedDepth = false;
+                    break;
+                }
+                
+                if (value > tempBestValue) {
+                    tempBestValue = value;
+                    tempBestIndex = i;
+                }
             }
+            
+            // Only update best move if we completed the full depth search
+            if (completedDepth) {
+                bestValue = tempBestValue;
+                bestIndex = tempBestIndex;
+                memcpy(currentBestMove, state.movelist[bestIndex], MoveLength(state.movelist[bestIndex]));
+                memcpy(bestmove, currentBestMove, 12);
+            }
+            
+            currentDepth++;
         }
         
-        memcpy(bestmove, state.movelist[bestIndex], MoveLength(state.movelist[bestIndex]));
+        // If we didn't find any moves (shouldn't happen), use first available move
+        if (bestmove[0] == 0 && state.moveptr > 0) {
+            memcpy(bestmove, state.movelist[0], MoveLength(state.movelist[0]));
+        }
+    }
+
+    // Add this helper method to check if time is up
+    private boolean isTimeUp() {
+        long currentTime = System.currentTimeMillis();
+        long elapsedTime = currentTime - startTime;
+        // Leave a small buffer (50ms) to ensure we don't exceed the time limit
+        return elapsedTime >= (SecPerMove * 1000 - 50);
     }
 
     /* Converts a square label to it's x,y position */
@@ -597,7 +741,6 @@ System.err.println("Java read " + len + " chars: " + rval);
         String rval = "";
         char line[] = new char[1000];
         int x,len=0;
-System.err.println("Java waiting for input");
         try
         {
            //while(!br.ready()) ;
@@ -605,7 +748,6 @@ System.err.println("Java waiting for input");
         }
         catch(Exception e) { System.err.println("Java wio exception"); }
         for(x=0;x<len;x++) rval += line[x];
-System.err.println("Java wRead " + rval);
         return rval;
     }
 
@@ -682,6 +824,45 @@ System.err.println("Java wRead " + rval);
             System.err.println("Java move: " + buf);
             System.out.println(buf);
         }
+    }
+
+    private boolean IsProtected(char[][] board, int x, int y, int player) {
+        int forward = (player == 1) ? 1 : -1;
+        int backward = -forward;
+        
+        // Check if piece is protected by friendly pieces
+        for (int dx = -1; dx <= 1; dx += 2) {
+            // Check pieces behind (for both regular pieces and kings)
+            int backX = x + dx;
+            int backY = y + backward;
+            
+            if (backX >= 0 && backX < 8 && backY >= 0 && backY < 8) {
+                if (!empty(board[backY][backX]) && 
+                    color(board[backY][backX]) == player) {
+                    return true;
+                }
+            }
+            
+            // For kings, also check pieces in front
+            if (KING(board[y][x])) {
+                int frontX = x + dx;
+                int frontY = y + forward;
+                
+                if (frontX >= 0 && frontX < 8 && frontY >= 0 && frontY < 8) {
+                    if (!empty(board[frontY][frontX]) && 
+                        color(board[frontY][frontX]) == player) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // Check if piece is on the edge of the board
+        if (x == 0 || x == 7) {
+            return true;
+        }
+        
+        return false;
     }
 }
 

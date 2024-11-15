@@ -6,6 +6,7 @@
 #include <sys/times.h>
 #include <fcntl.h>
 #include <time.h>
+#include <Xm/Xm.h>
 #include <pthread.h>
 
 #include "checkers.h"
@@ -618,7 +619,7 @@ int main(int argc, char *argv[])
           argc-=2;
        }
        else MaxDepth = -1;
-    }  
+    }
     else MaxDepth = -1;
 
 #ifndef GRAPHICS
