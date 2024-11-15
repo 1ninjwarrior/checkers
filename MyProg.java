@@ -66,10 +66,6 @@ public class MyProg
     private static final int AGGRESSIVE_BONUS = 25;
     private static final int ENDGAME_KING_BONUS = 50;
     private static final int PROMOTION_PATH_BONUS = 20;
-    private List<String> moveHistory = new ArrayList<>();
-    private static final int MAX_HISTORY_SIZE = 10;
-    private static final int LOOP_PENALTY = 1000;
-    
 
     public int number(char x) { return ((x)&0x1f); }
     public boolean empty(char x) { return ((((x)>>5)&0x03)==0?1:0) != 0; }
@@ -337,7 +333,6 @@ public class MyProg
     private int evaluatePiece(char[][] board, int x, int y, int player, boolean mine) {
         int score = 0;
         int multiplier = mine ? 1 : 1;
-        int opponent = (player == 1) ? 2 : 1;
 
         score += PIECE_VALUE;
 
@@ -365,21 +360,6 @@ public class MyProg
 
         if(hasAttackingPosition(board, x, y, player)) {
             score += AGGRESSIVE_BONUS;
-        }
-
-        if (isLooping()) {
-            score -= LOOP_PENALTY;
-            
-            int closestOpponentDistance = getMinDistanceToOpponents(board, x, y, opponent);
-            score -= closestOpponentDistance * 50;
-            
-            if (moveHistory.size() >= 2) {
-                String lastMove = moveHistory.get(moveHistory.size() - 1);
-                int[] lastPos = getPositionFromMove(lastMove);
-                if (x == lastPos[0] && y == lastPos[1]) {
-                    score -= 500;
-                }
-            }
         }
         
         return score * multiplier;
@@ -530,9 +510,6 @@ public class MyProg
         
         if (depth == 0) {
             int score = EvaluatePosition(state.board, me);
-            if(isEndgame(state.board)) {
-                score -= getRepetitionPenalty(state);
-            }
             return score;
         }
         
@@ -614,6 +591,52 @@ public class MyProg
         }
     }
 
+    private boolean isValidMove(char[][] board, char[] move, int mlen) {
+        if (mlen < 2 || mlen > 12) return false;
+        
+        int[] xy = new int[2];
+        NumberToXY(move[0], xy);
+        int startX = xy[0];
+        int startY = xy[1];
+        
+        if (empty(board[startY][startX]) || color(board[startY][startX]) != me) {
+            return false;
+        }
+        
+        for (int i = 1; i < mlen; i++) {
+            NumberToXY(move[i], xy);
+            int endX = xy[0];
+            int endY = xy[1];
+            
+            if (endX < 0 || endX > 7 || endY < 0 || endY > 7 || !empty(board[endY][endX])) {
+                return false;
+            }
+            
+            if (Math.abs(endX - startX) == 2) {
+                int jumpedX = startX + (endX - startX) / 2;
+                int jumpedY = startY + (endY - startY) / 2;
+                
+                if (empty(board[jumpedY][jumpedX]) || color(board[jumpedY][jumpedX]) == me) {
+                    return false;
+                }
+            }
+            else if (Math.abs(endX - startX) == 1) {
+                if (!KING(board[startY][startX])) {
+                    if ((me == 1 && endY <= startY) || (me == 2 && endY >= startY)) {
+                        return false;
+                    }
+                }
+            } else {
+                return false;
+            }
+            
+            startX = endX;
+            startY = endY;
+        }
+        
+        return true;
+    }
+
     void FindBestMove(int player) {
         startTime = System.currentTimeMillis();
         timeIsUp = false;
@@ -651,14 +674,7 @@ public class MyProg
                 int mlen = MoveLength(state.movelist[i]);
                 PerformMove(nextstate.board, state.movelist[i], mlen);
                 
-                String potentialMove = MoveToText(state.movelist[i]);
-                int loopPenalty = 0;
-                
-                if (!moveHistory.isEmpty() && potentialMove.equals(moveHistory.get(moveHistory.size() - 1))) {
-                    loopPenalty = LOOP_PENALTY;
-                }
-                
-                int value = MinVal(nextstate, alpha, beta, currentDepth - 1) - loopPenalty;
+                int value = MinVal(nextstate, alpha, beta, currentDepth - 1);
                 moveScores[i] = value;
                 moveIndices.add(i);
                 
@@ -670,12 +686,7 @@ public class MyProg
             }
             
             moveIndices.sort((a, b) -> Integer.compare(moveScores[b], moveScores[a]));
-            
-            if (isLooping() && moveIndices.size() > 1) {
-                tempBestIndex = moveIndices.get(1);
-            } else {
-                tempBestIndex = moveIndices.get(0);
-            }
+            tempBestIndex = moveIndices.get(0);
             
             if (completedDepth) {
                 bestIndex = tempBestIndex;
@@ -686,10 +697,22 @@ public class MyProg
             currentDepth++;
         }
         
-        String selectedMove = MoveToText(bestmove);
-        moveHistory.add(selectedMove);
-        if (moveHistory.size() > MAX_HISTORY_SIZE) {
-            moveHistory.remove(0);
+        // Add move validation before performing the move
+        if (bestmove[0] != 0) {
+            int mlen = MoveLength(bestmove);
+            if (!isValidMove(board, bestmove, mlen)) {
+                // If best move is invalid, try to find any valid move
+                for (int i = 0; i < state.moveptr; i++) {
+                    if (isValidMove(board, state.movelist[i], MoveLength(state.movelist[i]))) {
+                        memcpy(bestmove, state.movelist[i], 12);
+                        break;
+                    }
+                }
+                // If no valid moves found, set bestmove to 0
+                if (!isValidMove(board, bestmove, MoveLength(bestmove))) {
+                    memset(bestmove, 0, 12);
+                }
+            }
         }
     }
 
@@ -913,10 +936,15 @@ System.err.println("Java read " + len + " chars: " + rval);
             if(player1!=0) FindBestMove(1); else FindBestMove(2);
             if(bestmove[0] != 0) { /* There is a legal move */
                 mlen = MoveLength(bestmove);
-                PerformMove(board,bestmove,mlen);
-                buf = MoveToText(bestmove);
+                if (isValidMove(board, bestmove, mlen)) {
+                    PerformMove(board, bestmove, mlen);
+                    buf = MoveToText(bestmove);
+                } else {
+                    System.exit(1); // Exit if no valid move is found
+                }
+            } else {
+                System.exit(1);
             }
-            else System.exit(1); /* No legal moves available, so I have lost */
 
             /* Write the move to the pipe */
             System.err.println("Java move: " + buf);
@@ -957,58 +985,6 @@ System.err.println("Java read " + len + " chars: " + rval);
         }
         
         return false;
-    }
-
-    private boolean isEndgame(char[][] board) {
-        int totalPieces = 0;
-        for(int y = 0; y < 8; y++) {
-            for(int x = 0; x < 8; x++) {
-                if(x%2 != y%2 && !empty(board[y][x])) {
-                    totalPieces++;
-                }
-            }
-        }
-        return totalPieces <= 8;
-    }
-
-    private int getRepetitionPenalty(State state) {
-        int penalty = 0;
-        if(state.moveptr > 0) {
-            char[] lastMove = state.movelist[state.moveptr - 1];
-            if(lastMove[0] == lastMove[MoveLength(lastMove) - 1]) {
-                penalty += 100;
-            }
-        }
-        return penalty;
-    }
-    private boolean isLooping() {
-        if (moveHistory.size() < 4) return false;
-        
-        int last = moveHistory.size() - 1;
-        if (moveHistory.get(last).equals(moveHistory.get(last - 2)) &&
-            moveHistory.get(last - 1).equals(moveHistory.get(last - 3))) {
-            return true;
-        }
-        
-        if (moveHistory.size() >= 6) {
-            String pattern = moveHistory.get(last) + "," + moveHistory.get(last - 1);
-            String prevPattern = moveHistory.get(last - 2) + "," + moveHistory.get(last - 3);
-            if (pattern.equals(prevPattern)) {
-                return true;
-            }
-        }
-        
-        return false;
-    }
-
-    private int[] getPositionFromMove(String move) {
-        int[] pos = new int[2];
-        int square = Integer.parseInt(move.split("-")[0]);
-        int[] xy = new int[2];
-        NumberToXY((char)square, xy);
-        pos[0] = xy[0];
-        pos[1] = xy[1];
-        return pos;
     }
 }
 

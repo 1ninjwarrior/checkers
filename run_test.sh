@@ -1,6 +1,6 @@
 #!/bin/bash
 
-TOTAL_GAMES=25
+TOTAL_GAMES=100
 player1_wins=0
 player2_wins=0
 draws=0
@@ -9,7 +9,7 @@ echo "Starting $TOTAL_GAMES games..."
 
 for ((i=1; i<=$TOTAL_GAMES; i++)); do
     # Run checkers with output redirected to a temp file
-    ./checkers ./computer "java MyProg" 1 > temp_output.txt 2>&1
+    ./checkers ./computer "java MyProg" 1 -MaxDepth 5 > temp_output.txt 2>&1
     
     # Check the exit status to determine winner
     status=$?
