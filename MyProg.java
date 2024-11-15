@@ -57,9 +57,8 @@ public class MyProg
     private long startTime;
     private boolean timeIsUp;
 
-    // Enhanced heuristic weights
     private static final int PIECE_VALUE = 100;
-    private static final int KING_VALUE = 200;  // Increased king value
+    private static final int KING_VALUE = 200;
     private static final int BACK_ROW_BONUS = 30;
     private static final int MIDDLE_BOX_BONUS = 35;
     private static final int PROTECTED_PIECE_BONUS = 20;
@@ -67,6 +66,10 @@ public class MyProg
     private static final int AGGRESSIVE_BONUS = 25;
     private static final int ENDGAME_KING_BONUS = 50;
     private static final int PROMOTION_PATH_BONUS = 20;
+    private List<String> moveHistory = new ArrayList<>();
+    private static final int MAX_HISTORY_SIZE = 10;
+    private static final int LOOP_PENALTY = 1000;
+    
 
     public int number(char x) { return ((x)&0x1f); }
     public boolean empty(char x) { return ((((x)>>5)&0x03)==0?1:0) != 0; }
@@ -301,7 +304,6 @@ public class MyProg
         return (jumpptr+moveptr);
     }
 
-    // Enhanced evaluation function
     private int EvaluatePosition(char[][] board, int player) {
         int score = 0;
         int opponent = (player == 1) ? 2 : 1;
@@ -322,13 +324,11 @@ public class MyProg
             }
         }
 
-        // Endgame detection and strategy adjustment
         boolean isEndgame = (myPieces + opponentPieces) <= 8;
         if(isEndgame) {
             score += evaluateEndgame(board, player, myPieces, opponentPieces);
         }
 
-        // Mobility evaluation
         score += evaluateMobility(board, player) * MOBILITY_BONUS;
         
         return score;
@@ -336,61 +336,158 @@ public class MyProg
 
     private int evaluatePiece(char[][] board, int x, int y, int player, boolean mine) {
         int score = 0;
-        int multiplier = mine ? 1 : 1;  // Adjust if needed for balance
+        int multiplier = mine ? 1 : 1;
+        int opponent = (player == 1) ? 2 : 1;
 
-        // Base piece value
         score += PIECE_VALUE;
 
-        // King value
         if(KING(board[y][x])) {
             score += KING_VALUE;
-            // Additional bonus for centralized kings
             if((x >= 2 && x <= 5) && (y >= 2 && y <= 5)) {
                 score += 15;
             }
         } else {
-            // Promotion path bonus for regular pieces
             int promotionDistance = (player == 1) ? (7 - y) : y;
             score += (PROMOTION_PATH_BONUS * (7 - promotionDistance)) / 7;
         }
 
-        // Position-based bonuses
         if((player == 1 && y == 7) || (player == 2 && y == 0)) {
             score += BACK_ROW_BONUS;
         }
 
-        // Middle control bonus
         if((y == 3 || y == 4) && (x >= 2 && x <= 5)) {
             score += MIDDLE_BOX_BONUS;
         }
 
-        // Protected piece bonus
         if(IsProtected(board, x, y, player)) {
             score += PROTECTED_PIECE_BONUS;
         }
 
-        // Aggressive positioning bonus
         if(hasAttackingPosition(board, x, y, player)) {
             score += AGGRESSIVE_BONUS;
         }
 
+        if (isLooping()) {
+            score -= LOOP_PENALTY;
+            
+            int closestOpponentDistance = getMinDistanceToOpponents(board, x, y, opponent);
+            score -= closestOpponentDistance * 50;
+            
+            if (moveHistory.size() >= 2) {
+                String lastMove = moveHistory.get(moveHistory.size() - 1);
+                int[] lastPos = getPositionFromMove(lastMove);
+                if (x == lastPos[0] && y == lastPos[1]) {
+                    score -= 500;
+                }
+            }
+        }
+        
         return score * multiplier;
     }
 
     private int evaluateEndgame(char[][] board, int player, int myPieces, int opponentPieces) {
         int score = 0;
+        int opponent = (player == 1) ? 2 : 1;
+
+        score += (myPieces - opponentPieces) * 200;
         
-        // Strongly favor having more pieces in endgame
-        score += (myPieces - opponentPieces) * 150;
+        int myKingCount = 0;
+        int opponentKingCount = 0;
+        int distanceToOpponents = 0;
         
-        // Extra value for kings in endgame
         for(int y = 0; y < 8; y++) {
             for(int x = 0; x < 8; x++) {
                 if(x%2 != y%2 && !empty(board[y][x])) {
-                    if(color(board[y][x]) == player && KING(board[y][x])) {
-                        score += ENDGAME_KING_BONUS;
+                    if(color(board[y][x]) == player) {
+                        if(KING(board[y][x])) {
+                            myKingCount++;
+                            distanceToOpponents -= getMinDistanceToOpponents(board, x, y, opponent);
+                        }
+                        if(player == 1) {
+                            score += (y * 30);
+                        } else {
+                            score += ((7-y) * 30);
+                        }
+                    } else if(KING(board[y][x])) {
+                        opponentKingCount++;
                     }
                 }
+            }
+        }
+        
+        score += (myKingCount - opponentKingCount) * ENDGAME_KING_BONUS * 2;
+        
+        score += distanceToOpponents * 25;
+        
+        if(myPieces > opponentPieces) {
+            score += getAggressiveScore(board, player) * 40;
+        }
+        
+        if(myKingCount > 0 && opponentKingCount == 0) {
+            score += forceWinStrategy(board, player, opponent) * 100;
+        }
+        
+        return score;
+    }
+    
+    private int getMinDistanceToOpponents(char[][] board, int x, int y, int opponent) {
+        int minDistance = 100;
+        for(int i = 0; i < 8; i++) {
+            for(int j = 0; j < 8; j++) {
+                if(j%2 != i%2 && !empty(board[i][j]) && color(board[i][j]) == opponent) {
+                    int distance = Math.abs(x - j) + Math.abs(y - i);
+                    minDistance = Math.min(minDistance, distance);
+                }
+            }
+        }
+        return minDistance;
+    }
+
+    private int getAggressiveScore(char[][] board, int player) {
+        int score = 0;
+        for(int y = 0; y < 8; y++) {
+            for(int x = 0; x < 8; x++) {
+                if(x%2 != y%2 && !empty(board[y][x]) && color(board[y][x]) == player) {
+                    if(hasAttackingPosition(board, x, y, player)) {
+                        score += 50;
+                    }
+                }
+            }
+        }
+        return score;
+    }
+
+    private int forceWinStrategy(char[][] board, int player, int opponent) {
+        int score = 0;
+        int opponentPieceX = -1;
+        int opponentPieceY = -1;
+        
+        for(int y = 0; y < 8; y++) {
+            for(int x = 0; x < 8; x++) {
+                if(x%2 != y%2 && !empty(board[y][x]) && color(board[y][x]) == opponent) {
+                    opponentPieceX = x;
+                    opponentPieceY = y;
+                    break;
+                }
+            }
+        }
+        
+        if(opponentPieceX != -1) {
+            int minKingDistance = 100;
+            for(int y = 0; y < 8; y++) {
+                for(int x = 0; x < 8; x++) {
+                    if(x%2 != y%2 && !empty(board[y][x]) && 
+                       color(board[y][x]) == player && KING(board[y][x])) {
+                        int distance = Math.abs(x - opponentPieceX) + Math.abs(y - opponentPieceY);
+                        minKingDistance = Math.min(minKingDistance, distance);
+                    }
+                }
+            }
+            score += (14 - minKingDistance) * 50;
+            
+            if(opponentPieceX == 0 || opponentPieceX == 7 || 
+               opponentPieceY == 0 || opponentPieceY == 7) {
+                score += 200;
             }
         }
         
@@ -409,13 +506,11 @@ public class MyProg
     private boolean hasAttackingPosition(char[][] board, int x, int y, int player) {
         int forward = (player == 1) ? 1 : -1;
         
-        // Check if piece can jump opponent pieces
         for(int dx = -2; dx <= 2; dx += 4) {
             int ny = y + (forward * 2);
             int nx = x + dx;
             
             if(ny >= 0 && ny < 8 && nx >= 0 && nx < 8) {
-                // Check if middle position has opponent piece
                 if(!empty(board[y + forward][x + (dx/2)]) && 
                    color(board[y + forward][x + (dx/2)]) != player &&
                    empty(board[ny][nx])) {
@@ -427,19 +522,23 @@ public class MyProg
         return false;
     }
 
-    // Enhanced MinVal and MaxVal functions with better pruning
     private int MinVal(State state, int alpha, int beta, int depth) {
         if (timeIsUp || isTimeUp()) {
             timeIsUp = true;
             return EvaluatePosition(state.board, me);
         }
         
-        if (depth == 0) return EvaluatePosition(state.board, me);
+        if (depth == 0) {
+            int score = EvaluatePosition(state.board, me);
+            if(isEndgame(state.board)) {
+                score -= getRepetitionPenalty(state);
+            }
+            return score;
+        }
         
         FindLegalMoves(state);
-        if(state.moveptr == 0) return Integer.MAX_VALUE; // Loss for MIN
+        if(state.moveptr == 0) return Integer.MAX_VALUE;
         
-        // Sort moves to improve pruning
         sortMoves(state);
         
         for(int i = 0; i < state.moveptr; i++) {
@@ -466,9 +565,8 @@ public class MyProg
         if (depth == 0) return EvaluatePosition(state.board, me);
         
         FindLegalMoves(state);
-        if(state.moveptr == 0) return Integer.MIN_VALUE; // Loss for MAX
+        if(state.moveptr == 0) return Integer.MIN_VALUE; 
         
-        // Sort moves to improve pruning
         sortMoves(state);
         
         for(int i = 0; i < state.moveptr; i++) {
@@ -486,11 +584,9 @@ public class MyProg
         return alpha;
     }
 
-    // Helper method to sort moves for better pruning
     private void sortMoves(State state) {
         int[] moveScores = new int[state.moveptr];
         
-        // Score each move
         for(int i = 0; i < state.moveptr; i++) {
             State nextstate = new State();
             nextstate.player = (state.player == 1) ? 2 : 1;
@@ -502,17 +598,14 @@ public class MyProg
             moveScores[i] = EvaluatePosition(nextstate.board, me);
         }
         
-        // Bubble sort moves based on scores
         for(int i = 0; i < state.moveptr - 1; i++) {
             for(int j = 0; j < state.moveptr - i - 1; j++) {
                 if(moveScores[j] < moveScores[j + 1]) {
-                    // Swap moves
                     char[] tempMove = new char[12];
                     memcpy(tempMove, state.movelist[j], 12);
                     memcpy(state.movelist[j], state.movelist[j + 1], 12);
                     memcpy(state.movelist[j + 1], tempMove, 12);
                     
-                    // Swap scores
                     int tempScore = moveScores[j];
                     moveScores[j] = moveScores[j + 1];
                     moveScores[j + 1] = tempScore;
@@ -521,7 +614,6 @@ public class MyProg
         }
     }
 
-    // Modified FindBestMove using iterative deepening with time limit
     void FindBestMove(int player) {
         startTime = System.currentTimeMillis();
         timeIsUp = false;
@@ -529,7 +621,6 @@ public class MyProg
         
         int alpha = Integer.MIN_VALUE;
         int beta = Integer.MAX_VALUE;
-        int bestValue = Integer.MIN_VALUE;
         int bestIndex = 0;
         char[] currentBestMove = new char[12];
         
@@ -540,17 +631,17 @@ public class MyProg
         
         FindLegalMoves(state);
         
-        // If only one move is available, make it immediately
         if (state.moveptr == 1) {
             memcpy(bestmove, state.movelist[0], MoveLength(state.movelist[0]));
             return;
         }
 
-        // Iterative deepening loop
         while (!timeIsUp && (MaxDepth == -1 || currentDepth <= MaxDepth)) {
             boolean completedDepth = true;
-            int tempBestValue = Integer.MIN_VALUE;
             int tempBestIndex = 0;
+            
+            int[] moveScores = new int[state.moveptr];
+            List<Integer> moveIndices = new ArrayList<>();
             
             for (int i = 0; i < state.moveptr && !timeIsUp; i++) {
                 State nextstate = new State();
@@ -560,23 +651,33 @@ public class MyProg
                 int mlen = MoveLength(state.movelist[i]);
                 PerformMove(nextstate.board, state.movelist[i], mlen);
                 
-                int value = MinVal(nextstate, alpha, beta, currentDepth - 1);
+                String potentialMove = MoveToText(state.movelist[i]);
+                int loopPenalty = 0;
+                
+                if (!moveHistory.isEmpty() && potentialMove.equals(moveHistory.get(moveHistory.size() - 1))) {
+                    loopPenalty = LOOP_PENALTY;
+                }
+                
+                int value = MinVal(nextstate, alpha, beta, currentDepth - 1) - loopPenalty;
+                moveScores[i] = value;
+                moveIndices.add(i);
                 
                 if (isTimeUp()) {
                     timeIsUp = true;
                     completedDepth = false;
                     break;
                 }
-                
-                if (value > tempBestValue) {
-                    tempBestValue = value;
-                    tempBestIndex = i;
-                }
             }
             
-            // Only update best move if we completed the full depth search
+            moveIndices.sort((a, b) -> Integer.compare(moveScores[b], moveScores[a]));
+            
+            if (isLooping() && moveIndices.size() > 1) {
+                tempBestIndex = moveIndices.get(1);
+            } else {
+                tempBestIndex = moveIndices.get(0);
+            }
+            
             if (completedDepth) {
-                bestValue = tempBestValue;
                 bestIndex = tempBestIndex;
                 memcpy(currentBestMove, state.movelist[bestIndex], MoveLength(state.movelist[bestIndex]));
                 memcpy(bestmove, currentBestMove, 12);
@@ -585,17 +686,16 @@ public class MyProg
             currentDepth++;
         }
         
-        // If we didn't find any moves (shouldn't happen), use first available move
-        if (bestmove[0] == 0 && state.moveptr > 0) {
-            memcpy(bestmove, state.movelist[0], MoveLength(state.movelist[0]));
+        String selectedMove = MoveToText(bestmove);
+        moveHistory.add(selectedMove);
+        if (moveHistory.size() > MAX_HISTORY_SIZE) {
+            moveHistory.remove(0);
         }
     }
 
-    // Add this helper method to check if time is up
     private boolean isTimeUp() {
         long currentTime = System.currentTimeMillis();
         long elapsedTime = currentTime - startTime;
-        // Leave a small buffer (50ms) to ensure we don't exceed the time limit
         return elapsedTime >= (SecPerMove * 1000 - 50);
     }
 
@@ -657,7 +757,6 @@ public class MyProg
     String MoveToText(char move[])
     {
         int i;
-        char temp[] = new char[8];
 
         String mtext = "";
         if(move[0]!=0) 
@@ -676,7 +775,7 @@ public class MyProg
     /* Performs a move on the board, updating the state of the board */
     void PerformMove(char board[][], char move[], int mlen)
     {
-        int i,j,x,y,x1,y1,x2,y2;
+        int i,j,x,y,x1,y1,x2;
 
         int xy[] = new int[2];
 
@@ -691,7 +790,6 @@ public class MyProg
         board[y][x] &= Clear;
         NumberToXY(move[1],xy);
         x2=xy[0];
-        y2=xy[1];
         if(Math.abs(x2-x) == 2) {
             for(i=0,j=1; j<mlen; i++,j++) {
                 if(move[i] > move[j]) {
@@ -830,9 +928,7 @@ System.err.println("Java read " + len + " chars: " + rval);
         int forward = (player == 1) ? 1 : -1;
         int backward = -forward;
         
-        // Check if piece is protected by friendly pieces
         for (int dx = -1; dx <= 1; dx += 2) {
-            // Check pieces behind (for both regular pieces and kings)
             int backX = x + dx;
             int backY = y + backward;
             
@@ -843,7 +939,6 @@ System.err.println("Java read " + len + " chars: " + rval);
                 }
             }
             
-            // For kings, also check pieces in front
             if (KING(board[y][x])) {
                 int frontX = x + dx;
                 int frontY = y + forward;
@@ -857,12 +952,63 @@ System.err.println("Java read " + len + " chars: " + rval);
             }
         }
         
-        // Check if piece is on the edge of the board
         if (x == 0 || x == 7) {
             return true;
         }
         
         return false;
+    }
+
+    private boolean isEndgame(char[][] board) {
+        int totalPieces = 0;
+        for(int y = 0; y < 8; y++) {
+            for(int x = 0; x < 8; x++) {
+                if(x%2 != y%2 && !empty(board[y][x])) {
+                    totalPieces++;
+                }
+            }
+        }
+        return totalPieces <= 8;
+    }
+
+    private int getRepetitionPenalty(State state) {
+        int penalty = 0;
+        if(state.moveptr > 0) {
+            char[] lastMove = state.movelist[state.moveptr - 1];
+            if(lastMove[0] == lastMove[MoveLength(lastMove) - 1]) {
+                penalty += 100;
+            }
+        }
+        return penalty;
+    }
+    private boolean isLooping() {
+        if (moveHistory.size() < 4) return false;
+        
+        int last = moveHistory.size() - 1;
+        if (moveHistory.get(last).equals(moveHistory.get(last - 2)) &&
+            moveHistory.get(last - 1).equals(moveHistory.get(last - 3))) {
+            return true;
+        }
+        
+        if (moveHistory.size() >= 6) {
+            String pattern = moveHistory.get(last) + "," + moveHistory.get(last - 1);
+            String prevPattern = moveHistory.get(last - 2) + "," + moveHistory.get(last - 3);
+            if (pattern.equals(prevPattern)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    private int[] getPositionFromMove(String move) {
+        int[] pos = new int[2];
+        int square = Integer.parseInt(move.split("-")[0]);
+        int[] xy = new int[2];
+        NumberToXY((char)square, xy);
+        pos[0] = xy[0];
+        pos[1] = xy[1];
+        return pos;
     }
 }
 
