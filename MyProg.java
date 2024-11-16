@@ -410,6 +410,8 @@ public class MyProg
         return score;
     }
     
+    // Finds the minimum distance to any opponent piece
+    // reference: https://www.geeksforgeeks.org/find-the-minimum-distance-between-two-numbers/
     private int getMinDistanceToOpponents(char[][] board, int x, int y, int opponent) {
         int minDistance = 100;
         for(int i = 0; i < 8; i++) {
@@ -423,11 +425,14 @@ public class MyProg
         return minDistance;
     }
 
+    // Calculates the score based on how many pieces are in attacking positions
     private int getAggressiveScore(char[][] board, int player) {
         int score = 0;
         for(int y = 0; y < 8; y++) {
             for(int x = 0; x < 8; x++) {
+                // Check valid checkerboard squares
                 if(x%2 != y%2 && !empty(board[y][x]) && color(board[y][x]) == player) {
+                    // Check if the piece has an attacking position
                     if(hasAttackingPosition(board, x, y, player)) {
                         score += 50;
                     }
@@ -437,6 +442,7 @@ public class MyProg
         return score;
     }
 
+    // Implements a strategy to force a win when possible
     private int forceWinStrategy(char[][] board, int player, int opponent) {
         int score = 0;
         int opponentPieceX = -1;
@@ -444,6 +450,7 @@ public class MyProg
         
         for(int y = 0; y < 8; y++) {
             for(int x = 0; x < 8; x++) {
+                // Check valid checkerboard squares
                 if(x%2 != y%2 && !empty(board[y][x]) && color(board[y][x]) == opponent) {
                     opponentPieceX = x;
                     opponentPieceY = y;
@@ -456,6 +463,7 @@ public class MyProg
             int minKingDistance = 100;
             for(int y = 0; y < 8; y++) {
                 for(int x = 0; x < 8; x++) {
+                    // Check valid checkerboard squares
                     if(x%2 != y%2 && !empty(board[y][x]) && 
                        color(board[y][x]) == player && KING(board[y][x])) {
                         int distance = Math.abs(x - opponentPieceX) + Math.abs(y - opponentPieceY);
@@ -474,6 +482,7 @@ public class MyProg
         return score;
     }
 
+    // Evaluates the mobility of a player by counting their legal moves
     private int evaluateMobility(char[][] board, int player) {
         State tempState = new State();
         tempState.player = player;
@@ -502,6 +511,7 @@ public class MyProg
         return false;
     }
 
+    // Minimax algorithm for the AI to evaluate moves
     private int MinVal(State state, int alpha, int beta, int depth) {
         if (timeIsUp || isTimeUp()) {
             timeIsUp = true;
@@ -533,6 +543,7 @@ public class MyProg
         return beta;
     }
 
+    // Maximizes the score for the AI
     private int MaxVal(State state, int alpha, int beta, int depth) {
         if (timeIsUp || isTimeUp()) {
             timeIsUp = true;
@@ -561,6 +572,7 @@ public class MyProg
         return alpha;
     }
 
+    // Sorts the moves based on their evaluation scores
     private void sortMoves(State state) {
         int[] moveScores = new int[state.moveptr];
         
@@ -591,6 +603,7 @@ public class MyProg
         }
     }
 
+    // Validates a move to ensure it adheres to the game rules
     private boolean isValidMove(char[][] board, char[] move, int mlen) {
         if (mlen < 2 || mlen > 12) return false;
         
@@ -637,6 +650,7 @@ public class MyProg
         return true;
     }
 
+    // Finds the best move for the AI
     void FindBestMove(int player) {
         startTime = System.currentTimeMillis();
         timeIsUp = false;
@@ -697,18 +711,16 @@ public class MyProg
             currentDepth++;
         }
         
-        // Add move validation before performing the move
+
         if (bestmove[0] != 0) {
             int mlen = MoveLength(bestmove);
             if (!isValidMove(board, bestmove, mlen)) {
-                // If best move is invalid, try to find any valid move
                 for (int i = 0; i < state.moveptr; i++) {
                     if (isValidMove(board, state.movelist[i], MoveLength(state.movelist[i]))) {
                         memcpy(bestmove, state.movelist[i], 12);
                         break;
                     }
                 }
-                // If no valid moves found, set bestmove to 0
                 if (!isValidMove(board, bestmove, MoveLength(bestmove))) {
                     memset(bestmove, 0, 12);
                 }
